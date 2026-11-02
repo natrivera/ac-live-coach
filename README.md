@@ -462,3 +462,15 @@ corner. Ships with a Buttonwillow guide distilled from a Full
 Throttle Driving Academy tutorial (see guides/); its layout
 takes Star Mazda instead of the Sweeper, so that zone
 intentionally has no tips. No guide file, no change.
+
+**v2.4.0** — symptom-triggered guide tips. A guide tip can now
+carry a symptom trigger ("brake", "coast", "power", "speed",
+"apex_early", "apex_late", "lift", "hands"). When a data cue
+fires at a corner and the winning fix's symptom has a tagged
+guide tip there, the human coach's wording is spoken instead of
+the generic fix — same cue slot, same budgets, only the words
+change. Untagged tips still appear in the report (and in the
+optional once-per-session spoken tips). Config kill switch:
+guide_symptom_tips (default true). The Buttonwillow guide ships
+with 8 tagged tips, e.g. Phil Hill brake -> "Brake as late as
+the car allows", Esses coast -> "Flat out until the fourth S".

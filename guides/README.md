@@ -62,5 +62,13 @@ file, no change in behaviour.
 }
 ```
 
+A tip may also be an object with a symptom `trigger`:
+`{"text": "Flat out until the fourth S", "trigger": "coast"}`.
+When a data cue fires at that corner and the winning fix's symptom
+matches the trigger, the coach speaks the tip instead of the generic
+fix. Triggers: `brake`, `coast`, `power`, `speed`, `apex_early`,
+`apex_late`, `lift`, `hands`. Tag only tips that genuinely address
+that symptom; untagged tips still show in the report.
+
 `priority` is what the corner rewards: `exit` (speed onto what
 follows), `entry` (braking and turn-in), or `balanced`.

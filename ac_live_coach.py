@@ -149,7 +149,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -173,6 +173,7 @@ DEFAULT_CONFIG = {
     "heading_split_deg": 20,      # v2.0.5: min heading swing to split a wide zone (was hard-coded 25)
     "focus": "all",               # v2.1.0: "brake" = brake-coaching mode, approach cues give braking fixes only
     "guide_spoken_tips": False,   # v2.3: speak track-guide tips aloud (once per corner per session); the guide always feeds the report and cue priority
+    "guide_symptom_tips": True,   # v2.4: when a data cue fires, a guide tip tagged with the same symptom replaces the generic wording
     "section_feedback": True,     # v2.1.0: one line per track section when its small losses add up
     "section_min_loss_s": 0.45,   # section total that earns a section line
     "expected_track_hint": "buttonwillow",  # soft check only; app runs anywhere
@@ -1144,45 +1145,50 @@ def _cue_candidates(s):
         out.append(("coast", f"{name}: less coasting, commit to a pedal"))
     if s.get("apex_shift_m") is not None and abs(s["apex_shift_m"]) >= 25:
         if s["apex_shift_m"] > 0:
-            out.append(("line", f"{name}: apex is late there \u2014 turn in earlier"))
+            out.append(("apex_late", f"{name}: apex is late there \u2014 turn in earlier"))
         else:
-            out.append(("line", f"{name}: early apex \u2014 delay the turn-in, don't pinch the exit"))
+            out.append(("apex_early", f"{name}: early apex \u2014 delay the turn-in, don't pinch the exit"))
     if s.get("mid_lift"):
-        out.append(("line", f"{name}: you're lifting mid-corner \u2014 commit, or carry less in"))
+        out.append(("lift", f"{name}: you're lifting mid-corner \u2014 commit, or carry less in"))
     if s["apex_delta_kmh"] <= -5:
         out.append(("speed", f"{name}: carry more speed in"))
     if s.get("throttle_delta_m") is not None and s["throttle_delta_m"] >= 10:
         out.append(("power", f"{name}: get to power earlier"))
     if ((s.get("steer_rev_delta") or 0) >= 2
             and (s.get("steer_work_ratio") or 1) >= 1.3):
-        out.append(("line", f"{name}: busy hands there \u2014 one clean steering input"))
+        out.append(("hands", f"{name}: busy hands there \u2014 one clean steering input"))
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] >= 10:
         out.append(("brake", f"{name}: you're braking deep, watch the entry"))
     return out
 
 
-def _cue_text(name, s, priority=None):
-    """The single most useful spoken fix for one span's stats.
+def _pick_candidate(s, priority=None):
+    """The winning (kind, text) fix for one span's stats, or None.
     v2.3: a track guide can declare what matters at a corner --
     priority "exit" elevates power/speed fixes, "entry" elevates
     braking/coast fixes; anything else keeps the standing order."""
-    s = dict(s)
-    s["name"] = name
     cands = _cue_candidates(s)
     if not cands:
         return None
     if priority == "exit":
         for kind, txt in cands:
             if kind in ("power", "speed"):
-                return txt
+                return kind, txt
     elif priority == "entry":
         for kind, txt in cands:
             if kind in ("brake", "coast"):
-                return txt
-    return cands[0][1]
+                return kind, txt
+    return cands[0]
 
 
-def corner_cue(res, brake_only=False, priority=None):
+def _cue_text(name, s, priority=None):
+    s = dict(s)
+    s["name"] = name
+    pick = _pick_candidate(s, priority=priority)
+    return pick[1] if pick else None
+
+
+def corner_cue(res, brake_only=False, priority=None, guide=None, symptom_tips=True):
     """Pick the single most useful spoken fix for a corner from its
     data. v2.0: when the corner has phases (Riverside, Phil Hill,
     Sweeper) and one phase holds most of the loss, the cue names the
@@ -1208,7 +1214,21 @@ def corner_cue(res, brake_only=False, priority=None):
             txt = _cue_text(worst["name"], worst, priority=priority)
             if txt:
                 return txt
-    return _cue_text(res["name"], res, priority=priority)
+    s = dict(res)
+    s["name"] = res["name"]
+    pick = _pick_candidate(s, priority=priority)
+    if pick is None:
+        return None
+    kind, txt = pick
+    # v2.4 symptom-triggered guide tips: when the winning fix's
+    # symptom has a tagged guide tip at this corner, the human
+    # coach's wording replaces the generic fix. Same cue slot, same
+    # budgets -- only the words change.
+    if symptom_tips and guide is not None and res.get("num") is not None:
+        gtip = guide_tip_for(guide, res["num"], kind)
+        if gtip:
+            return f"{res['name']}: {gtip}"
+    return txt
 
 
 class TrackProfile:
@@ -1320,6 +1340,27 @@ def guide_zone(guide, num):
 def guide_priority(guide, num):
     z = guide_zone(guide, num)
     return (z or {}).get("priority") if z else None
+
+
+def tip_text(tip):
+    """A guide tip is a plain string, or (v2.4) an object with
+    "text" and an optional symptom "trigger"."""
+    return tip if isinstance(tip, str) else (tip.get("text") or "")
+
+
+def tip_trigger(tip):
+    return None if isinstance(tip, str) else tip.get("trigger")
+
+
+def guide_tip_for(guide, num, kind):
+    """The guide tip tagged for symptom `kind` at zone `num`."""
+    z = guide_zone(guide, num)
+    if not z:
+        return None
+    for tip in z.get("tips") or []:
+        if tip_trigger(tip) == kind:
+            return tip_text(tip)
+    return None
 
 
 class Coach:
@@ -2179,7 +2220,9 @@ class Coach:
                 cue = corner_cue(
                     latest,
                     brake_only=(self.cfg.get("focus") == "brake"),
-                    priority=guide_priority(getattr(self.profile, "guide", None), num))
+                    priority=guide_priority(getattr(self.profile, "guide", None), num),
+                    guide=getattr(self.profile, "guide", None),
+                    symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
                 if cue:
                     self.speaker.say(cue)
                     self.last_spoke_t = t
@@ -2213,7 +2256,7 @@ class Coach:
             delta = (cur_bin - trig) % NBINS
             if delta <= max(6, int(25.0 / bin_m)):
                 name = c.get("name") or f"Turn {num}"
-                self.speaker.say(f"{name}: {tips[0]}")
+                self.speaker.say(f"{name}: {tip_text(tips[0])}")
                 self.last_spoke_t = t
                 self._guide_tipped.add(num)
                 break
@@ -2281,7 +2324,9 @@ class Coach:
             cue = corner_cue(
                 worst, brake_only=brake_only,
                 priority=guide_priority(getattr(self.profile, "guide", None),
-                                        worst.get("num")))
+                                        worst.get("num")),
+                guide=getattr(self.profile, "guide", None),
+                symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
             if cue:
                 parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(worst['loss'])}.")
             elif brake_only:
@@ -2321,7 +2366,9 @@ class Coach:
                 cue = corner_cue(
                     lst[-1],
                     priority=guide_priority(getattr(self.profile, "guide", None),
-                                            num)) or "no single fix stands out"
+                                            num),
+                    guide=getattr(self.profile, "guide", None),
+                    symptom_tips=bool(self.cfg.get("guide_symptom_tips", True))) or "no single fix stands out"
             else:
                 cue = "no consistent leak"
             lines.append(f"  Turn {num}: avg loss {avg:+.2f}s over {len(lst)} laps -- {cue}")
@@ -2467,7 +2514,9 @@ def build_report_html(coach):
         for c, avg, latest in ranked[:5]:
             cue = corner_cue(
                 latest,
-                priority=guide_priority(p.guide, c["num"])) if latest else None
+                priority=guide_priority(p.guide, c["num"]),
+                guide=p.guide,
+                symptom_tips=bool(coach.cfg.get("guide_symptom_tips", True))) if latest else None
             fix = cue.split(": ", 1)[1] if cue and ": " in cue else "see data below"
             items.append(
                 f"<li><b>{esc(corner_label(c))}</b> — losing <b>{avg:+.2f}s</b> per lap "
@@ -2508,13 +2557,13 @@ def build_report_html(coach):
                 continue
             pri = z.get("priority")
             pri_s = f" \u00b7 priority: {esc(pri)}" if pri else ""
-            tip_lis = "".join(f"<li>{esc(t)}</li>" for t in tips)
+            tip_lis = "".join(f"<li>{esc(tip_text(t))}</li>" for t in tips)
             blocks.append(
                 f"<p><b>{esc(corner_label(c))}</b>{pri_s}</p>"
                 + (f"<p>{esc(char)}</p>" if char else "")
                 + (f"<ul>{tip_lis}</ul>" if tip_lis else ""))
         for u in g.get("unmatched") or []:
-            tip_lis = "".join(f"<li>{esc(t)}</li>" for t in (u.get("tips") or []))
+            tip_lis = "".join(f"<li>{esc(tip_text(t))}</li>" for t in (u.get("tips") or []))
             blocks.append(
                 f"<p><b>{esc(u.get('corner', 'Unmatched corner'))}</b> "
                 f"<i>(not a separate zone on your map \u2014 "
