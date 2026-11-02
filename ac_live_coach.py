@@ -149,7 +149,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.2.0"
+VERSION = "2.3.0"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -172,6 +172,7 @@ DEFAULT_CONFIG = {
     "open_report_window": True,   # pop the post-session map report in a browser
     "heading_split_deg": 20,      # v2.0.5: min heading swing to split a wide zone (was hard-coded 25)
     "focus": "all",               # v2.1.0: "brake" = brake-coaching mode, approach cues give braking fixes only
+    "guide_spoken_tips": False,   # v2.3: speak track-guide tips aloud (once per corner per session); the guide always feeds the report and cue priority
     "section_feedback": True,     # v2.1.0: one line per track section when its small losses add up
     "section_min_loss_s": 0.45,   # section total that earns a section line
     "expected_track_hint": "buttonwillow",  # soft check only; app runs anywhere
@@ -1130,31 +1131,58 @@ def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
     return results
 
 
-def _cue_text(name, s):
-    """The single most useful spoken fix for one span's stats."""
+def _cue_candidates(s):
+    """Every applicable fix for one span's stats, in the coach's
+    standing priority order, as (kind, text) pairs. _cue_text picks
+    from this list; a track guide's per-corner priority (v2.3) can
+    re-rank the pick without changing what's applicable."""
+    name = s["name"]
+    out = []
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] <= -8:
-        return f"{name}: brake later"
+        out.append(("brake", f"{name}: brake later"))
     if s["coast_s"] >= 0.5:
-        return f"{name}: less coasting, commit to a pedal"
+        out.append(("coast", f"{name}: less coasting, commit to a pedal"))
     if s.get("apex_shift_m") is not None and abs(s["apex_shift_m"]) >= 25:
         if s["apex_shift_m"] > 0:
-            return f"{name}: apex is late there \u2014 turn in earlier"
-        return f"{name}: early apex \u2014 delay the turn-in, don't pinch the exit"
+            out.append(("line", f"{name}: apex is late there \u2014 turn in earlier"))
+        else:
+            out.append(("line", f"{name}: early apex \u2014 delay the turn-in, don't pinch the exit"))
     if s.get("mid_lift"):
-        return f"{name}: you're lifting mid-corner \u2014 commit, or carry less in"
+        out.append(("line", f"{name}: you're lifting mid-corner \u2014 commit, or carry less in"))
     if s["apex_delta_kmh"] <= -5:
-        return f"{name}: carry more speed in"
+        out.append(("speed", f"{name}: carry more speed in"))
     if s.get("throttle_delta_m") is not None and s["throttle_delta_m"] >= 10:
-        return f"{name}: get to power earlier"
+        out.append(("power", f"{name}: get to power earlier"))
     if ((s.get("steer_rev_delta") or 0) >= 2
             and (s.get("steer_work_ratio") or 1) >= 1.3):
-        return f"{name}: busy hands there \u2014 one clean steering input"
+        out.append(("line", f"{name}: busy hands there \u2014 one clean steering input"))
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] >= 10:
-        return f"{name}: you're braking deep, watch the entry"
-    return None
+        out.append(("brake", f"{name}: you're braking deep, watch the entry"))
+    return out
 
 
-def corner_cue(res, brake_only=False):
+def _cue_text(name, s, priority=None):
+    """The single most useful spoken fix for one span's stats.
+    v2.3: a track guide can declare what matters at a corner --
+    priority "exit" elevates power/speed fixes, "entry" elevates
+    braking/coast fixes; anything else keeps the standing order."""
+    s = dict(s)
+    s["name"] = name
+    cands = _cue_candidates(s)
+    if not cands:
+        return None
+    if priority == "exit":
+        for kind, txt in cands:
+            if kind in ("power", "speed"):
+                return txt
+    elif priority == "entry":
+        for kind, txt in cands:
+            if kind in ("brake", "coast"):
+                return txt
+    return cands[0][1]
+
+
+def corner_cue(res, brake_only=False, priority=None):
     """Pick the single most useful spoken fix for a corner from its
     data. v2.0: when the corner has phases (Riverside, Phil Hill,
     Sweeper) and one phase holds most of the loss, the cue names the
@@ -1177,10 +1205,10 @@ def corner_cue(res, brake_only=False):
     if phs and res["loss"] > 0:
         worst = max(phs, key=lambda p: p["loss"])
         if worst["loss"] >= 0.6 * res["loss"]:
-            txt = _cue_text(worst["name"], worst)
+            txt = _cue_text(worst["name"], worst, priority=priority)
             if txt:
                 return txt
-    return _cue_text(res["name"], res)
+    return _cue_text(res["name"], res, priority=priority)
 
 
 class TrackProfile:
@@ -1192,6 +1220,7 @@ class TrackProfile:
         self.ref = None       # {"spd": [...], "brk": [...], "gas": [...]}
         self.corners = []
         self.outline = None   # [[x, y], ...] driven line for the report map
+        self.guide = None     # v2.3: track guide dict for this track (see _load_guide)
 
     def load(self):
         if os.path.exists(self.path):
@@ -1262,6 +1291,35 @@ class TrackProfile:
     @property
     def bin_m(self):
         return (self.track_length_m or 4780.0) / NBINS
+
+
+def _load_guide(track):
+    """Track guide (v2.3): human-coach knowledge for one track,
+    distilled offline into <track>__guide.json -- looked for next to
+    the profiles first, then in the app folder's guides/. Returns
+    the parsed dict or None. Coaching is unchanged without one."""
+    for base in (TRACKS_DIR, os.path.join(APP_DIR, "guides")):
+        path = os.path.join(base, track + "__guide.json")
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    g = json.load(f)
+                if isinstance(g, dict) and isinstance(g.get("zones"), dict):
+                    return g
+        except Exception:
+            pass
+    return None
+
+
+def guide_zone(guide, num):
+    if not guide:
+        return None
+    return (guide.get("zones") or {}).get(str(num))
+
+
+def guide_priority(guide, num):
+    z = guide_zone(guide, num)
+    return (z or {}).get("priority") if z else None
 
 
 class Coach:
@@ -1480,6 +1538,12 @@ class Coach:
         # v2.1.0 cross-session history for this combo (see
         # history_path): loaded once per profile, sessions counted
         # when a stored reference exists.
+        # v2.3: track guide for this profile's track, if one exists
+        # (profiles folder first, then the app's guides/ folder).
+        profile.guide = _load_guide(profile.key.rsplit("__", 1)[0])
+        self._guide_tipped = set()
+        if profile.guide:
+            print(f"[coach] track guide loaded: {profile.key.rsplit('__', 1)[0]}")
         self.history = {"sessions": 0, "laps": 0, "corners": {}}
         try:
             hp = profile.history_path()
@@ -1774,6 +1838,7 @@ class Coach:
                 pass  # this lap is far off the pace -- an out/in lap
             else:
                 self._maybe_approach_cue(t, pos)
+                self._maybe_guide_tip(t, pos)
                 self._maybe_exit_feedback(t, pos)
 
     @staticmethod
@@ -2111,13 +2176,46 @@ class Coach:
             # (~25 m -- wide enough that 30 Hz polling can't step over it)
             delta = (cur_bin - trig) % NBINS
             if delta <= max(6, int(25.0 / bin_m)):
-                cue = corner_cue(latest,
-                                 brake_only=(self.cfg.get("focus") == "brake"))
+                cue = corner_cue(
+                    latest,
+                    brake_only=(self.cfg.get("focus") == "brake"),
+                    priority=guide_priority(getattr(self.profile, "guide", None), num))
                 if cue:
                     self.speaker.say(cue)
                     self.last_spoke_t = t
                     self.approach_fired.add(num)
                     self.approach_cues_this_lap += 1
+                break
+
+    def _maybe_guide_tip(self, t, pos):
+        # v2.3 spoken guide tips (config "guide_spoken_tips", default
+        # off): the first time the car approaches a guided corner on
+        # a coached lap, speak that corner's first guide tip -- once
+        # per corner per session. Data cues keep their own budget;
+        # tips share only the speech cooldown. Called from feed()
+        # under the same out-lap / off-pace mute as the other cues.
+        if not self.cfg.get("guide_spoken_tips"):
+            return
+        guide = getattr(self.profile, "guide", None)
+        if not guide or not self._cooldown_ok(t):
+            return
+        bin_m = self.profile.bin_m
+        approach_bins = int(float(self.cfg["approach_distance_m"]) / bin_m)
+        cur_bin = int(pos * NBINS) % NBINS
+        for c in self.profile.corners:
+            num = c["num"]
+            if num in self._guide_tipped:
+                continue
+            tips = (guide_zone(guide, num) or {}).get("tips") or []
+            if not tips:
+                continue
+            trig = (c["brake_bin"] - approach_bins) % NBINS
+            delta = (cur_bin - trig) % NBINS
+            if delta <= max(6, int(25.0 / bin_m)):
+                name = c.get("name") or f"Turn {num}"
+                self.speaker.say(f"{name}: {tips[0]}")
+                self.last_spoke_t = t
+                self._guide_tipped.add(num)
                 break
 
     def _maybe_exit_feedback(self, t, pos):
@@ -2180,7 +2278,10 @@ class Coach:
         worst = max(clean, key=lambda r: r["loss"]) if clean else None
         if worst and worst["loss"] >= float(self.cfg["min_loss_to_speak"]):
             brake_only = self.cfg.get("focus") == "brake"
-            cue = corner_cue(worst, brake_only=brake_only)
+            cue = corner_cue(
+                worst, brake_only=brake_only,
+                priority=guide_priority(getattr(self.profile, "guide", None),
+                                        worst.get("num")))
             if cue:
                 parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(worst['loss'])}.")
             elif brake_only:
@@ -2217,7 +2318,10 @@ class Coach:
         for num, lst in ranked:
             avg = sum(x["loss"] for x in lst) / len(lst)
             if avg >= float(self.cfg["min_loss_to_speak"]):
-                cue = corner_cue(lst[-1]) or "no single fix stands out"
+                cue = corner_cue(
+                    lst[-1],
+                    priority=guide_priority(getattr(self.profile, "guide", None),
+                                            num)) or "no single fix stands out"
             else:
                 cue = "no consistent leak"
             lines.append(f"  Turn {num}: avg loss {avg:+.2f}s over {len(lst)} laps -- {cue}")
@@ -2361,7 +2465,9 @@ def build_report_html(coach):
     if ranked:
         items = []
         for c, avg, latest in ranked[:5]:
-            cue = corner_cue(latest) if latest else None
+            cue = corner_cue(
+                latest,
+                priority=guide_priority(p.guide, c["num"])) if latest else None
             fix = cue.split(": ", 1)[1] if cue and ": " in cue else "see data below"
             items.append(
                 f"<li><b>{esc(corner_label(c))}</b> — losing <b>{avg:+.2f}s</b> per lap "
@@ -2385,6 +2491,46 @@ def build_report_html(coach):
                 f"<td>{latest['coast_s']:.1f}s</td></tr>")
     table_html = ("<table><tr><th>Corner</th><th>Avg loss</th><th>Brake Δ (last lap, ft)</th>"
                   "<th>Apex Δ (mph)</th><th>Coast</th></tr>" + "\n".join(rows) + "</table>")
+
+    # v2.3: track-guide section -- the human coach's notes paired
+    # with the corner data above, when a guide exists for this track.
+    guide_html = ""
+    g = getattr(p, "guide", None) if p else None
+    if g:
+        blocks = []
+        for c in (p.corners or []):
+            z = guide_zone(g, c["num"])
+            if not z:
+                continue
+            tips = z.get("tips") or []
+            char = z.get("character") or ""
+            if not tips and not char:
+                continue
+            pri = z.get("priority")
+            pri_s = f" \u00b7 priority: {esc(pri)}" if pri else ""
+            tip_lis = "".join(f"<li>{esc(t)}</li>" for t in tips)
+            blocks.append(
+                f"<p><b>{esc(corner_label(c))}</b>{pri_s}</p>"
+                + (f"<p>{esc(char)}</p>" if char else "")
+                + (f"<ul>{tip_lis}</ul>" if tip_lis else ""))
+        for u in g.get("unmatched") or []:
+            tip_lis = "".join(f"<li>{esc(t)}</li>" for t in (u.get("tips") or []))
+            blocks.append(
+                f"<p><b>{esc(u.get('corner', 'Unmatched corner'))}</b> "
+                f"<i>(not a separate zone on your map \u2014 "
+                f"{esc(u.get('between', ''))})</i></p>"
+                + (f"<ul>{tip_lis}</ul>" if tip_lis else ""))
+        notes = g.get("layout_notes") or []
+        if notes:
+            blocks.append("<p><b>Layout notes (from the source)</b></p><ul>"
+                          + "".join(f"<li>{esc(n)}</li>" for n in notes) + "</ul>")
+        if blocks:
+            srcmeta = g.get("source") or {}
+            src_line = ""
+            if srcmeta.get("title"):
+                src_line = (f"<p class='sub'>From: {esc(srcmeta.get('title', ''))}"
+                            f" \u2014 {esc(srcmeta.get('channel', ''))}</p>")
+            guide_html = "<h2>Track guide</h2>" + src_line + "\n".join(blocks) + "\n"
 
     summary_txt = "\n".join(coach.session_summary_lines())
     best = fmt_lap(p.best_lap_s) if p and p.best_lap_s else "—"
@@ -2414,7 +2560,7 @@ pre {{ background: #f4f5f7; padding: 12px; border-radius: 6px; white-space: pre-
 {points_html}
 <h2>Corner data (averages vs your best lap)</h2>
 {table_html}
-<h2>Session summary</h2>
+{guide_html}<h2>Session summary</h2>
 <pre>{esc(summary_txt)}</pre>
 <p class="sub">Map drawn from your own driven line (heading + distance integration).
 Corners where you left the track (2+ tyres off) are excluded from the averages —

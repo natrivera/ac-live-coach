@@ -114,6 +114,8 @@ the numbers behind it, are in there.
 - `cue_cooldown_s` — minimum seconds between spoken lines (default 6)
 - `focus` — `"all"`, or `"brake"` for braking fixes only
 - `section_feedback` / `section_min_loss_s` — section callouts
+- `guide_spoken_tips` — speak each guided corner's first tip
+  once per session (default off; see `guides/`)
 - `voice_enabled` — false = console only
 
 ## Known limits
@@ -445,3 +447,18 @@ fallback if Piper is missing or fails 3 cues running),
 "piper_voice" picks any piper-voices model name,
 "piper_length_scale" is the rate (<1 faster). requirements.txt
 gains piper-tts. Coaching logic unchanged from v2.1.1.
+
+**v2.3.0** — track guides: human-coach knowledge as data. A
+per-track <track>__guide.json (looked for next to the profiles,
+then in the app folder's guides/) adds three things: (1) the
+session report gains a Track guide section pairing each corner's
+notes with your data, including corners the source covers that
+your map doesn't separate, plus layout notes; (2) cue priority —
+a corner whose guide priority is "exit" hears power/speed fixes
+ahead of braking fixes, "entry" the reverse; (3) optional spoken
+tips (config guide_spoken_tips, default off): the first approach
+to a guided corner each session speaks its first tip, once per
+corner. Ships with a Buttonwillow guide distilled from a Full
+Throttle Driving Academy tutorial (see guides/); its layout
+takes Star Mazda instead of the Sweeper, so that zone
+intentionally has no tips. No guide file, no change.

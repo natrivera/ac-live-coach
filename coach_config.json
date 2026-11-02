@@ -22,5 +22,6 @@
   "voice_engine": "piper",
   "piper_voice": "en_US-lessac-medium",
   "piper_length_scale": 1.0,
-  "piper_dir": ""
+  "piper_dir": "",
+  "guide_spoken_tips": false
 }
