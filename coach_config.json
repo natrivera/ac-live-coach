@@ -3,7 +3,7 @@
   "briefing_start_m": 900,
   "cue_cooldown_s": 6.0,
   "exit_min_loss_s": 0.2,
-  "expected_track_hint": "buttonwillow",
+  "expected_track_hint": "",
   "max_approach_cues_per_lap": 5,
   "min_loss_to_speak": 0.15,
   "off_min_duration_2tyres_s": 0.9,

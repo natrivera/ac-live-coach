@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AC Live Coach v1 -- Buttonwillow 13CW first, learns any track.
+AC Live Coach -- a live voice coach that learns any track.
 
 A personal live coach for Assetto Corsa (original AC + Content Manager).
 It reads the game's shared-memory telemetry (the same feed other apps use),

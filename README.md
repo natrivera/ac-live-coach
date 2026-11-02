@@ -1,20 +1,55 @@
-# AC Live Coach v1
+# AC Live Coach
 
-A personal live coach for Assetto Corsa, built for Albert. It reads AC's
-shared-memory telemetry, builds its reference from **your own laps**, and
-speaks short cues only at the corners where your data says time is sitting.
-No account, no subscription, nothing leaves your PC.
+A live voice coach for Assetto Corsa (the original AC). It works with
+**any car at any track**. It reads the game's shared-memory telemetry,
+builds its reference from **your own best lap**, detects the corners
+from your speed trace, and speaks short cues only where your data says
+time is sitting. Everything runs locally on your PC: no account, no
+subscription, no cloud, nothing leaves the machine.
+
+> **Built with AI.** This entire project was coded by an AI assistant
+> (Muse), working from the requirements, session logs and feedback of
+> the human who drives with it. The human directed, tested and drove;
+> the code — and this README — were written by the AI. It works, and
+> it is tested in live sessions after every change, but expect rough
+> edges and read the changelog for how it got here.
+
+## What it does
+
+- **First lap at a new car/track combo is mapping.** It becomes your
+  reference. If a saved reference exists for the combo, coaching
+  starts immediately against your standing best.
+- **Approach cues** ~260 m before the brake zone of a problem corner:
+  the single biggest fix from your recent laps there ("Turn 6: brake
+  later"). Max 5 per lap, never two lines within 6 seconds.
+- **Exit feedback** right after a corner that cost real time
+  (>= 0.2 s, or >= 0.35 s at minor corners), capped at 3 per lap.
+- **Section feedback**: if a third of the lap bleeds time across
+  several corners without one big leak, you hear one line for the
+  section instead.
+- **Lap summary** at the line: lap time (spoken "2 oh 4 point 3"),
+  the gap to your best, and your biggest leak.
+- **Out laps are never coached or counted**: the first lap on a
+  loaded profile, any lap 15%+ off your best, and laps after a pit
+  stop or reset. Corners where you went off (2+ tyres out, timed)
+  are excused, not blamed.
+- **Post-session report**: an HTML page with the track outline traced
+  from your own driven line, corner markers coloured by average loss,
+  the ranked coaching points and the full corner table.
+
+## Requirements
+
+- Windows PC with Assetto Corsa (original AC, e.g. via Steam).
+- Python 3 (python.org; tick "Add python.exe to PATH" on install).
 
 ## Install (once)
 
-1. Put this folder anywhere on the Cyborg (Desktop is fine).
-2. Python 3 must be installed (python.org, check "Add python.exe to PATH"
-   during setup if it's a fresh install).
-3. For voice, open a terminal in this folder and run:
-   `pip install pyttsx3`
-   (Skip it and the coach still works — cues print in the console window
-   instead of speaking.)
-4. No in-game setting needed. Original Assetto Corsa publishes its
+1. Put this folder anywhere on your PC.
+2. Open a terminal in the folder and install the voice engines:
+   `pip install -r requirements.txt`
+   (Skip this and the coach still works — cues print in the console
+   window instead of speaking.)
+3. No in-game setting is needed. Original AC publishes its
    shared-memory telemetry automatically while you're on track (the
    "Shared Memory" toggle you may see mentioned online is an AC EVO
    thing — it doesn't exist in AC 2014). Menus publish nothing; the
@@ -22,61 +57,84 @@ No account, no subscription, nothing leaves your PC.
 
 ## Run (every session)
 
-1. Start Assetto Corsa and load Buttonwillow 13CW.
+1. Start Assetto Corsa and load any track, any car.
 2. Double-click **run_coach.bat** (or run `python ac_live_coach.py`).
-   Leave the console window open on a second screen or behind the game.
-3. Drive. Lap 1 at a new car/track is mapping — it becomes your reference.
-   From lap 2 the coaching starts. If a saved reference exists for the
-   car/track, coaching starts immediately against your standing best.
-4. When you're done, click the console window and press **Ctrl+C**.
-   A summary prints and the debrief file is finalized.
+   If Windows Smart App Control or SmartScreen objects to the .bat,
+   run the Python command from a terminal instead. Leave the console
+   window open behind the game.
+3. On first launch the neural voice model (~63 MB) downloads once
+   into a `voices` folder; after that the voice works fully offline.
+4. Drive. The first lap at a new combo maps; from lap 2 the coaching
+   starts.
+5. When you're done, click the console window and press **Ctrl+C**.
+   A summary prints and the debrief is finalized. Run the coach from
+   the same folder every time — your saved profiles persist between
+   versions as long as the folder stays put.
 
-## What it says, and when
+## Corner names (optional)
 
-- **Approach cue** ~260 m before the brake zone of one of your problem
-  corners: the single biggest fix from your recent laps there
-  ("Turn 6: brake later"). Max 3 per lap, never two lines within 6 seconds.
-- **Exit feedback** only when a corner cost 0.3 s or more on that lap.
-- **Lap summary** at the line: lap time, gap to your best, biggest leak.
-- Corners are numbered in driving order (Turn 1, Turn 2, ...) as detected
-  from your reference lap's speed trace.
+Everywhere, corners are **Turn 1, Turn 2, ...** in driving order by
+default, and the coaching is identical. If you want real names at a
+track, name them yourself: after a first session, open
+`<profiles folder>\<track>__names.json` (the coach writes a starter
+file) and put a name against each zone number, e.g.
+`{"1": "Sunrise", "2": "Off Ramp"}`. Restart the coach and the names
+stick — also across remaps, matched by zone number. (A name table for
+Buttonwillow is built in; everywhere else starts as Turn N.)
 
 ## Files it writes
 
-- `logs/session_*.jsonl` — every lap, corner analysis and cue, timestamped.
-- `logs/debrief_*.txt` — the readable version, incl. the end-of-session
-  ranking and a theoretical-best estimate from your own corner zones.
-- `tracks/<track>__<car>.json` — your saved reference lap + corner map.
+- `logs/session_*.jsonl` — every lap, corner analysis and cue,
+  timestamped.
+- `logs/debrief_*.txt` — the readable version of the session.
+- `logs/report_*.html` — the post-session report page.
+- Your **profiles** (reference lap + corner map per car/track) live
+  in `ACLiveCoach\profiles` inside your Assetto Corsa install
+  folder, so they survive coach updates. The console prints the exact
+  path at startup.
+- `voices/` — the downloaded neural voice model (Piper).
 
-**After your first real session, send back the session's .jsonl and
-debrief .txt** — that's the tuning loop: cue thresholds, corner naming
-(real Buttonwillow names), and any calls that fired at the wrong place
-all get fixed from those files.
+Those log files are the tuning loop: every cue the coach spoke, and
+the numbers behind it, are in there.
 
 ## Tuning knobs (coach_config.json)
 
+- `voice_engine` — `"piper"` (offline neural voice, default) or
+  `"sapi"` (built-in Windows voices; also the automatic fallback if
+  Piper is unavailable)
+- `piper_voice` — any Piper voice model name
+  (default `en_US-lessac-medium`); `piper_length_scale` is its rate
+  (< 1 faster, > 1 slower)
+- `voice` / `voice_rate` — SAPI voice name fragment ("zira", "david")
+  and speed when the SAPI engine is used
 - `approach_distance_m` — earlier/later approach cues (default 260)
 - `min_loss_to_speak` — raise it (e.g. 0.25) if it talks too much
-- `max_approach_cues_per_lap` — default 3
+- `exit_min_loss_s` — the exit-feedback threshold (default 0.2)
+- `max_approach_cues_per_lap` — default 5
 - `cue_cooldown_s` — minimum seconds between spoken lines (default 6)
-- `voice_rate` — speech speed (default 178)
+- `focus` — `"all"`, or `"brake"` for braking fixes only
+- `section_feedback` / `section_min_loss_s` — section callouts
 - `voice_enabled` — false = console only
 
-## Known v1 limits
+## Known limits
 
-- The reference is your best lap, not a stitched theoretical best — the
-  debrief estimates the theoretical, the live coach chases your best.
-- Corner numbering comes from speed-trace detection; a very fast sweeper
-  with a small lift may not register as a corner in v1.
-- It coaches in practice/hotlap-style running (any live session, really);
-  it does not know about traffic, flags or race strategy.
-- First-run SmartScreen does not apply here (it's a Python script), but
-  Windows may ask the usual "keep this file" prompt on download.
+- The benchmark is always your own best lap — never a theoretical or
+  someone else's lap. The debrief estimates a theoretical best from
+  your sector bests; the live coach chases your best.
+- Corner detection reads your speed trace; a very fast sweeper with
+  only a small lift may not register as a corner.
+- AC's shared memory carries no opponent positions and no track-edge
+  data, so there is no spotter and no true racing-line coaching —
+  line feedback is symptoms (apex point, mid-corner lifts, steering
+  corrections) measured against your own best lap.
+- It coaches in practice/hotlap-style running; it knows nothing
+  about traffic, flags or race strategy.
 
 ## Test without the game
 
 `python ac_live_coach.py --simulate` runs the coaching brain against a
-synthetic track with planted driving faults and prints what it would say.
+synthetic track with planted driving faults and prints what it would
+say.
 
 ## Changelog
 
