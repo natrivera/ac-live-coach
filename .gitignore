@@ -1,0 +1,7 @@
+__pycache__/
+logs/
+profiles/
+tracks/
+voices/
+*.jsonl
+report_*.html

@@ -1,0 +1,2 @@
+pyttsx3>=2.90
+piper-tts>=1.2
