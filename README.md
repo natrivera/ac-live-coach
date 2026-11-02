@@ -508,3 +508,27 @@ they aren't in the current profiles folder. The v2.5 move made
 files dropped in the old location by habit silently do nothing;
 the current folder still wins when both exist, and the console
 prints the full path of the names file it applied.
+
+**v2.5.3** — a hardening pass from an external code review (every
+finding verified against the code first):
+- One bad telemetry frame can no longer end the session: the
+  per-frame work (static check, lap observation, feed, report) is
+  exception-guarded with throttled logging, and non-finite
+  position/speed frames are dropped at the door.
+- Profile, track-map and history writes are atomic (temp file,
+  fsync, os.replace) and keep a .bak of the previous file; a
+  corrupted profile now recovers from its backup instead of
+  silently starting fresh.
+- Corner numbers are int()-coerced before they reach the report
+  SVGs, and the report path is built from the log's file name
+  only, not by string-replacing the whole path.
+- The default Piper voice is verified against pinned SHA-256
+  hashes (existing files too — a bad copy is re-downloaded, a bad
+  download refuses to load); piper_voice is shape-validated before
+  it reaches a URL or file path; dependencies are pinned
+  (piper-tts 1.8.0, smoke-tested against the synth path).
+- Hygiene: log writes are lock-serialized across the speech and
+  main threads, the session JSONL handle is closed at exit, the
+  Steam libraryfolders read uses a managed handle, and profile
+  folder selection no longer creates folders in unchosen
+  locations (including inside the Steam install).

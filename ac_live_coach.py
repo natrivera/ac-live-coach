@@ -31,6 +31,8 @@ Test the coaching brain without the game:  python ac_live_coach.py --simulate
 """
 
 import ctypes
+import hashlib
+import re
 import html
 import json
 import math
@@ -59,7 +61,8 @@ def _ac_install_candidates():
         vdf = os.path.join(root, "steamapps", "libraryfolders.vdf")
         try:
             if os.path.exists(vdf):
-                txt = open(vdf, encoding="utf-8", errors="ignore").read()
+                with open(vdf, encoding="utf-8", errors="ignore") as fh:
+                    txt = fh.read()
                 for m in re.finditer(r'"path"\s*"([^"]+)"', txt):
                     lib = m.group(1).replace("\\\\", "\\")
                     cands.append(os.path.join(
@@ -70,8 +73,10 @@ def _ac_install_candidates():
 
 
 def _writable_dir(path):
+    """Probe writability of an EXISTING folder; never creates one
+    (v2.5.3 -- probing used to create ACLiveCoach/profiles inside
+    the Steam install and every other candidate as a side effect)."""
     try:
-        os.makedirs(path, exist_ok=True)
         probe = os.path.join(path, ".write_probe")
         with open(probe, "w") as f:
             f.write("ok")
@@ -162,11 +167,16 @@ def resolve_tracks_dir(cfg):
                            os.path.join(docs, "ACLiveCoach", "profiles")))
     candidates.append(("app folder (legacy)", legacy))
     for label, path in candidates:
+        if os.path.isdir(path):
+            ok = _writable_dir(path)
+        else:
+            parent = os.path.dirname(path)
+            ok = os.path.isdir(parent) and _writable_dir(parent)
+        if not ok:
+            continue
         try:
             os.makedirs(path, exist_ok=True)
         except Exception:
-            continue
-        if not _writable_dir(path):
             continue
         TRACKS_DIR = path
         legacy_homes = [legacy]
@@ -191,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.5.2"
+VERSION = "2.5.3"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -376,6 +386,28 @@ def _piper_urls(voice_name):
     return base + ".onnx", base + ".onnx.json"
 
 
+
+# v2.5.3: the default voice's downloads are verified against these
+# SHA-256 hashes (taken from the files as published). Other voices
+# are shape-validated but unpinned -- piper-tts prints no hash for
+# them here, so they load as downloaded.
+PIPER_PINNED_SHA256 = {
+    "en_US-lessac-medium": {
+        "onnx": "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
+        "json": "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
+    },
+}
+_PIPER_VOICE_RE = re.compile(r"^[a-z]{2}_[A-Z]{2}-[a-z0-9_]+-(x_low|low|medium|high)$")
+
+
+def _sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 class Speaker:
     def __init__(self, cfg, log_fn):
         self.cfg = cfg
@@ -454,9 +486,22 @@ class Speaker:
             return False
         try:
             name = (self.cfg.get("piper_voice") or "en_US-lessac-medium").strip()
+            if not _PIPER_VOICE_RE.match(name):
+                print(f"[voice] piper_voice '{name}' is not a valid voice "
+                      f"name; using en_US-lessac-medium")
+                name = "en_US-lessac-medium"
             vdir = self._voices_dir()
             model = os.path.join(vdir, name + ".onnx")
             conf = model + ".json"
+            pinned = PIPER_PINNED_SHA256.get(name)
+
+            def _hashes_ok():
+                if not pinned:
+                    return True
+                return (os.path.exists(model) and os.path.exists(conf)
+                        and _sha256_of(model) == pinned["onnx"]
+                        and _sha256_of(conf) == pinned["json"])
+
             if not (os.path.exists(model) and os.path.exists(conf)):
                 onnx_url, json_url = _piper_urls(name)
                 print(f"[voice] downloading the piper voice '{name}' "
@@ -464,6 +509,14 @@ class Speaker:
                 self._download(json_url, conf)
                 self._download(onnx_url, model)
                 print("[voice] voice downloaded; it works offline from here on")
+            elif pinned and not _hashes_ok():
+                print("[voice] the stored voice files fail their integrity "
+                      "check; downloading them again")
+                onnx_url, json_url = _piper_urls(name)
+                self._download(json_url, conf)
+                self._download(onnx_url, model)
+            if pinned and not _hashes_ok():
+                raise RuntimeError("voice files failed the SHA-256 check")
             from piper import PiperVoice
             self._piper_voice = PiperVoice.load(model, config_path=conf)
             self._piper_ready = True
@@ -1273,6 +1326,26 @@ def corner_cue(res, brake_only=False, priority=None, guide=None, symptom_tips=Tr
     return txt
 
 
+
+def _atomic_write_json(path, obj):
+    """Write JSON so a crash or a console closed mid-write cannot
+    truncate the only copy (v2.5.3 review fix): write a temp file in
+    the same folder, fsync, keep the previous file as <name>.bak,
+    then os.replace over the original -- atomic on the same volume."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f)
+        f.flush()
+        os.fsync(f.fileno())
+    if os.path.exists(path):
+        try:
+            import shutil
+            shutil.copy2(path, path + ".bak")
+        except Exception:
+            pass
+    os.replace(tmp, path)
+
+
 class TrackProfile:
     def __init__(self, key):
         self.key = key
@@ -1297,7 +1370,23 @@ class TrackProfile:
                 self.outline = d.get("path")
                 return True
             except Exception as e:
-                print(f"[profile] could not load {self.path} ({e}); starting fresh")
+                print(f"[profile] could not load {self.path} ({e}); "
+                      f"trying the backup")
+                bak = self.path + ".bak"
+                if os.path.exists(bak):
+                    try:
+                        with open(bak, "r", encoding="utf-8") as f:
+                            d = json.load(f)
+                        self.track_length_m = d["track_length_m"]
+                        self.best_lap_s = d["best_lap_s"]
+                        self.ref = {"spd": d["ref_spd"], "brk": d["ref_brk"], "gas": d["ref_gas"],
+                                    "hdg": d.get("ref_hdg"), "str": d.get("ref_str")}
+                        self.corners = d["corners"]
+                        self.outline = d.get("path")
+                        print(f"[profile] recovered {self.key} from the backup file")
+                        return True
+                    except Exception as e2:
+                        print(f"[profile] backup unusable too ({e2}); starting fresh")
         return False
 
     def track_map_path(self):
@@ -1322,8 +1411,7 @@ class TrackProfile:
             "corners": self.corners,
             "path": self.outline,
         }
-        with open(self.path, "w", encoding="utf-8") as f:
-            json.dump(d, f)
+        _atomic_write_json(self.path, d)
         # Share this corner map at track level so a DIFFERENT car at
         # the same track can borrow the corner positions (and names)
         # before its own first mapping lap (Albert's request, Nov 1).
@@ -1343,10 +1431,10 @@ class TrackProfile:
                     for c in existing.get("corners", []))
                 if (existing is None or existing.get("source") == self.key
                         or (named and not old_named)):
-                    with open(mp, "w", encoding="utf-8") as f:
-                        json.dump({"corners": self.corners, "path": self.outline,
-                                   "track_length_m": self.track_length_m,
-                                   "source": self.key}, f)
+                    _atomic_write_json(mp, {"corners": self.corners,
+                                            "path": self.outline,
+                                            "track_length_m": self.track_length_m,
+                                            "source": self.key})
             except Exception:
                 pass
 
@@ -1680,8 +1768,7 @@ class Coach:
             return
         try:
             os.makedirs(TRACKS_DIR, exist_ok=True)
-            with open(self.profile.history_path(), "w", encoding="utf-8") as f:
-                json.dump(self.history, f)
+            _atomic_write_json(self.profile.history_path(), self.history)
         except Exception:
             pass
 
@@ -1848,6 +1935,11 @@ class Coach:
 
     def feed(self, t, pos, speed_kmh, brake, gas, dist_m, live=True, ict_ms=None,
              heading=None, tyres_out=None, steer=None):
+        # A NaN position raises inside the binning math (int(nan));
+        # a non-finite frame is dropped, never fatal (v2.5.3).
+        if pos is None or speed_kmh is None or not (
+                math.isfinite(pos) and math.isfinite(speed_kmh)):
+            return
         if not live:
             return
         self._maybe_brief(t, speed_kmh, dist_m)
@@ -2451,9 +2543,17 @@ def make_logger():
     txt_path = os.path.join(LOGS_DIR, f"debrief_{stamp}.txt")
     jf = open(jsonl_path, "a", encoding="utf-8")
     tf = open(txt_path, "a", encoding="utf-8")
+    lock = threading.Lock()
     tf.write(f"AC Live Coach session {stamp}\n\n")
 
     def log(event, data):
+        # The speech thread and the main thread both write here
+        # (v2.5.3: serialize the writes -- interleaved lines could
+        # corrupt a record mid-write).
+        with lock:
+            _log_locked(event, data)
+
+    def _log_locked(event, data):
         rec = {"ts": time.strftime("%H:%M:%S"), "event": event}
         rec.update(data)
         jf.write(json.dumps(rec) + "\n")
@@ -2470,7 +2570,7 @@ def make_logger():
             tf.write(f"[{event}] {fmt_lap(data['lap_s'])}\n")
         tf.flush()
 
-    return log, txt_path, jsonl_path, tf
+    return log, txt_path, jsonl_path, tf, jf
 
 
 # --------------------------------------------------------------------------
@@ -2545,7 +2645,7 @@ def _trace_svg(p):
         name = c.get("name") or f"Turn {c.get('num')}"
         ly = 14 if i % 2 == 0 else 27
         parts.append(f'<text x="{ax:.0f}" y="{ly}" font-size="10.5" fill="#333" '
-                     f'text-anchor="middle">{c.get("num")} {html.escape(str(name))}</text>')
+                     f'text-anchor="middle">{int(c.get("num") or 0)} {html.escape(str(name))}</text>')
     for series, color in ((brk, "#d64545"), (gas, "#2e9e5b")):
         pts = " ".join(f"{X(b):.0f},{PB - (PB - PT) * max(0.0, min(1.0, series[b])):.0f}"
                        for b in range(0, n, 4))
@@ -2634,7 +2734,7 @@ def build_report_html(coach):
                 f'<circle cx="{mx:.0f}" cy="{my:.0f}" r="13" fill="{col}" '
                 f'stroke="#fff" stroke-width="2.5"/>'
                 f'<text x="{mx:.0f}" y="{my + 5:.0f}" font-size="14" '
-                f'font-weight="bold" fill="#fff" text-anchor="middle">{c["num"]}</text>')
+                f'font-weight="bold" fill="#fff" text-anchor="middle">{int(c["num"])}</text>')
         parts.append("</svg>")
         map_svg = "\n".join(parts)
     else:
@@ -2759,7 +2859,7 @@ the coach doesn't count a save as a technique problem.</p>
 
 
 def run_live(cfg):
-    log, txt_path, jsonl_path, tf = make_logger()
+    log, txt_path, jsonl_path, tf, jf = make_logger()
     speaker = Speaker(cfg, log)
     coach = Coach(cfg, speaker, log)
     if speaker.enabled:
@@ -2776,7 +2876,9 @@ def run_live(cfg):
     print("Waiting for Assetto Corsa... (telemetry goes live once you're "
           "on track; menus publish nothing)")
 
-    report_path = txt_path.replace("debrief_", "report_").replace(".txt", ".html")
+    report_path = os.path.join(
+        os.path.dirname(txt_path),
+        os.path.basename(txt_path).replace("debrief_", "report_").replace(".txt", ".html"))
     report_state = {"laps": -1, "opened": False}
 
     def open_report_once():
@@ -2819,6 +2921,8 @@ def run_live(cfg):
     current_key = None
     hint_warned = False
     last_static_check = 0.0
+    loop_errors = 0
+    last_loop_error_log = 0.0
     try:
         while True:
             if tele is None:
@@ -2839,62 +2943,82 @@ def run_live(cfg):
             except Exception:
                 time.sleep(0.05)
                 continue
-            now = time.time()
-            if now - last_static_check > 2.0:
-                last_static_check = now
-                st = tele.static()
-                key = sanitize(f"{st.track}__{st.carModel}")
-                if key != current_key:
-                    current_key = key
-                    profile = TrackProfile(key)
-                    if profile.load():
-                        print(f"[profile] loaded saved reference for {key}")
-                    if cfg.get("_remap") and (profile.ref is not None or profile.corners):
-                        # One-shot --remap: forget this car/track's
-                        # reference and map (plus the shared track
-                        # map) so the first full lap rebuilds them
-                        # with the finer v2.0 detector. The old file
-                        # is overwritten when the new reference lands.
-                        profile.ref = None
-                        profile.best_lap_s = None
-                        profile.corners = []
-                        try:
-                            mp = profile.track_map_path()
-                            if os.path.exists(mp):
-                                os.remove(mp)
-                        except Exception:
-                            pass
-                        print("[coach] --remap: saved reference cleared; "
-                              "the first full lap builds a fresh, finer map")
-                    coach.set_profile(profile)
-                    if cfg["expected_track_hint"] not in st.track.lower() and not hint_warned:
-                        hint_warned = True
-                        print(f"[note] this build was tuned for Buttonwillow 13CW; "
-                              f"you're on '{st.track}' -- coaching works on any track, "
-                              f"it just learns this one from your laps too.")
-            coach.observe_official(gfx.completedLaps, gfx.iLastTime, now)
-            coach.feed(now, gfx.normalizedCarPosition, phys.speedKmh,
-                       phys.brake, phys.gas, gfx.distanceTraveled,
-                       live=(gfx.status == AC_LIVE), ict_ms=gfx.iCurrentTime,
-                       heading=phys.heading,
-                       tyres_out=phys.numberOfTyresOut,
-                       steer=phys.steerAngle)
-            if (len(coach.lap_records) != report_state["laps"]
-                    or (not report_state["opened"]
-                        and coach.profile is not None
-                        and coach.profile.ref is not None)):
-                write_report()
-            time.sleep(1 / 30.0)
+            try:
+                now = time.time()
+                if now - last_static_check > 2.0:
+                    last_static_check = now
+                    st = tele.static()
+                    key = sanitize(f"{st.track}__{st.carModel}")
+                    if key != current_key:
+                        current_key = key
+                        profile = TrackProfile(key)
+                        if profile.load():
+                            print(f"[profile] loaded saved reference for {key}")
+                        if cfg.get("_remap") and (profile.ref is not None or profile.corners):
+                            # One-shot --remap: forget this car/track's
+                            # reference and map (plus the shared track
+                            # map) so the first full lap rebuilds them
+                            # with the finer v2.0 detector. The old file
+                            # is overwritten when the new reference lands.
+                            profile.ref = None
+                            profile.best_lap_s = None
+                            profile.corners = []
+                            try:
+                                mp = profile.track_map_path()
+                                if os.path.exists(mp):
+                                    os.remove(mp)
+                            except Exception:
+                                pass
+                            print("[coach] --remap: saved reference cleared; "
+                                  "the first full lap builds a fresh, finer map")
+                        coach.set_profile(profile)
+                        if cfg["expected_track_hint"] not in st.track.lower() and not hint_warned:
+                            hint_warned = True
+                            print(f"[note] this build was tuned for Buttonwillow 13CW; "
+                                  f"you're on '{st.track}' -- coaching works on any track, "
+                                  f"it just learns this one from your laps too.")
+                coach.observe_official(gfx.completedLaps, gfx.iLastTime, now)
+                coach.feed(now, gfx.normalizedCarPosition, phys.speedKmh,
+                           phys.brake, phys.gas, gfx.distanceTraveled,
+                           live=(gfx.status == AC_LIVE), ict_ms=gfx.iCurrentTime,
+                           heading=phys.heading,
+                           tyres_out=phys.numberOfTyresOut,
+                           steer=phys.steerAngle)
+                if (len(coach.lap_records) != report_state["laps"]
+                        or (not report_state["opened"]
+                            and coach.profile is not None
+                            and coach.profile.ref is not None)):
+                    write_report()
+                time.sleep(1 / 30.0)
+            except Exception as e:
+                # One bad frame must not end the session (v2.5.3
+                # review fix): a NaN position, a malformed profile
+                # field, an exhausted iterator -- log it, skip the
+                # frame, keep coaching.
+                loop_errors += 1
+                if time.time() - last_loop_error_log > 5.0:
+                    last_loop_error_log = time.time()
+                    print(f"[coach] telemetry loop error ({e}); continuing")
+                    try:
+                        log("loop_error", {"error": str(e),
+                                           "count": loop_errors})
+                    except Exception:
+                        pass
+                time.sleep(0.1)
     except KeyboardInterrupt:
         print("\nStopping coach...")
     finally:
-        coach.flush()
+        try:
+            coach.flush()
+        except Exception:
+            pass
         lines = coach.session_summary_lines()
         tf.write("\nSession summary\n")
         for ln in lines:
             tf.write(ln + "\n")
             print(ln)
         tf.close()
+        jf.close()
         print(f"Debrief saved: {txt_path}")
         try:
             write_report()
@@ -2968,7 +3092,7 @@ def sim_pedals(s, v, lap):
 
 def run_simulate(cfg):
     print("=== SIMULATE MODE (no game; synthetic Buttonwillow-like track) ===")
-    log, txt_path, jsonl_path, tf = make_logger()
+    log, txt_path, jsonl_path, tf, jf = make_logger()
     speaker = Speaker({**cfg, "voice_enabled": False}, log)
     coach = Coach(cfg, speaker, log)
     profile = TrackProfile("simulate__test")
@@ -2994,6 +3118,7 @@ def run_simulate(cfg):
         print(ln)
         tf.write(ln + "\n")
     tf.close()
+    jf.close()
     print(f"\nSim debrief: {txt_path}")
 
 

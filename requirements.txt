@@ -1,2 +1,5 @@
-pyttsx3>=2.90
-piper-tts>=1.2
+# Pinned for reproducibility (v2.5.3). piper-tts 1.8.0 is the
+# version the voice path is smoke-tested against (model load,
+# hash check, synthesize). pyttsx3 is only the fallback engine.
+pyttsx3==2.99
+piper-tts==1.8.0
