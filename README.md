@@ -143,6 +143,16 @@ say.
 
 ## Changelog
 
+### v2.6.0
+- **Reference integrity (external review):** a lap containing an off -- including a cut corner -- can no longer become the reference lap. If the standing reference itself came from such a lap (typically the first-ever lap, which has to set something), the next clean lap within 3% takes over as the honest benchmark.
+- **Cues ranked by measured cost:** the spoken fix at a corner is now the symptom with the largest estimated time cost (braking/throttle distances at the span's reference average speed, apex-speed deficit over the span's time, coast seconds), instead of the first symptom in a fixed order. A track guide's priority biases its favoured symptoms 1.5x rather than picking the class outright.
+- **Exit feedback says why:** the instant post-corner callout appends the winning fix ("lost 3 tenths there -- brake later") instead of saving the cause for next lap's approach cue.
+- **Profiles are keyed by tyre compound too:** the key gains the compound AC reports (e.g. `__tc_s`), so a soft-tyre reference no longer benchmarks medium-tyre laps. The first v2.6.0 run adopts your existing profile and history under the new key; other compounds start fresh.
+- **Layout guard:** AC reports the track folder, not the layout, so layouts used to share one profile. If a session's first lap measures >3% different from the loaded profile's stored length, the coach switches to a layout-specific profile (`__layout<length>`) before any data lands in the wrong one.
+- **Steadier approach cues:** a single lap now triggers a next-lap warning only on a big loss (>= 0.45 s); the old 0.25 s level needs a corroborating loss in another clean lap. The multi-lap average path is unchanged.
+- **Names/guide count guard:** name files and track guides are keyed by zone number; if their zone count no longer matches the profile's corner count, they're ignored with a console warning instead of silently naming the wrong corners.
+- **Tests ship with the repo:** `tests/run_tests.py` covers the reference rules, cue ranking, compound keys, the layout guard, the names guard and profile recovery -- run it any time, no game required.
+
 **v1.2** — live corner-by-corner coaching, rebuilt from Albert's second
 session log (Nov 1, 2026):
 - Approach cues no longer require a multi-lap average loss: one real

@@ -1133,6 +1133,8 @@ def _span_stats(lap_spd, lap_brk, lap_gas, lap_str, ref, z0, z1,
         if lap_brk[i] < 0.05 and lap_gas[i] < 0.05 and lap_spd[i] > 40:
             coast_s += bin_m / max(lap_spd[i] / 3.6, 3.0)
     out = {"zone_time": t_lap, "ref_zone_time": t_ref,
+           "span_m": round((z1 - z0) * bin_m, 1),
+           "ref_apex_kmh": round(ref_apex_v, 1),
            "loss": t_lap - t_ref,
            "brake_delta_m": brake_delta_m,
            "apex_delta_kmh": lap_apex_v - ref_apex_v,
@@ -1227,33 +1229,71 @@ def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
     return results
 
 
+def _symptom_costs(s):
+    """Estimated seconds behind each measurable symptom of one span,
+    from the span's own measurements (v2.6.0 -- a review pointed out
+    the cue picker used to take the FIRST applicable symptom in a
+    fixed order, so 'brake later' won whenever the driver braked 8 m
+    early, even when the time actually went elsewhere). Braking or
+    throttle distances convert at the span's reference average speed
+    (half weight -- the distance is partly re-covered at speed); an
+    apex-speed deficit scales with the span's reference time; coast
+    seconds are already time, at half weight (rolling still covers
+    ground). Line symptoms (apex shift, lift, hands) have no distance
+    or speed to convert, so they carry a nominal 0.15 s -- enough to
+    beat trivial pedal deltas, not real ones. The numbers only rank
+    symptoms WITHIN one corner; they are never spoken."""
+    span_t = s.get("ref_zone_time") or s.get("zone_time") or 0.0
+    span_m = s.get("span_m") or 0.0
+    v_avg = span_m / span_t if (span_t > 0 and span_m > 0) else 25.0
+    v_avg = min(max(v_avg, 8.0), 70.0)
+    apex_ref = max(s.get("ref_apex_kmh") or 60.0, 20.0)
+    costs = {}
+    bd = s.get("brake_delta_m")
+    if bd is not None:
+        costs["brake"] = abs(bd) / v_avg * 0.5
+    if s.get("coast_s"):
+        costs["coast"] = s["coast_s"] * 0.5
+    if s.get("apex_delta_kmh"):
+        costs["speed"] = (abs(s["apex_delta_kmh"]) / apex_ref
+                          * max(span_t, 0.0) * 0.5)
+    td = s.get("throttle_delta_m")
+    if td is not None:
+        costs["power"] = abs(td) / v_avg * 0.5
+    for kind in ("apex_early", "apex_late", "lift", "hands"):
+        costs[kind] = 0.15
+    return costs
+
+
 def _cue_candidates(s):
-    """Every applicable fix for one span's stats, in the coach's
-    standing priority order, as (kind, text) pairs. _cue_text picks
-    from this list; a track guide's per-corner priority (v2.3) can
-    re-rank the pick without changing what's applicable."""
+    """Every applicable fix for one span's stats, as (kind, text,
+    est_cost_s) triples in the coach's standing order. _pick_candidate
+    re-ranks by measured cost (v2.6.0); the standing order survives as
+    the tiebreak and as the fallback when a stat lacks the fields the
+    costing needs."""
     name = s["name"]
+    costs = _symptom_costs(s)
     out = []
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] <= -8:
-        out.append(("brake", f"{name}: brake later"))
+        out.append(("brake", f"{name}: brake later", costs.get("brake", 0.1)))
     if s["coast_s"] >= 0.5:
-        out.append(("coast", f"{name}: less coasting, commit to a pedal"))
+        out.append(("coast", f"{name}: less coasting, commit to a pedal", costs.get("coast", 0.1)))
     if s.get("apex_shift_m") is not None and abs(s["apex_shift_m"]) >= 25:
         if s["apex_shift_m"] > 0:
-            out.append(("apex_late", f"{name}: apex is late there \u2014 turn in earlier"))
+            out.append(("apex_late", f"{name}: apex is late there \u2014 turn in earlier", costs.get("apex_late", 0.15)))
         else:
-            out.append(("apex_early", f"{name}: early apex \u2014 delay the turn-in, don't pinch the exit"))
+            out.append(("apex_early", f"{name}: early apex \u2014 delay the turn-in, don't pinch the exit", costs.get("apex_early", 0.15)))
     if s.get("mid_lift"):
-        out.append(("lift", f"{name}: you're lifting mid-corner \u2014 commit, or carry less in"))
+        out.append(("lift", f"{name}: you're lifting mid-corner \u2014 commit, or carry less in", costs.get("lift", 0.15)))
     if s["apex_delta_kmh"] <= -5:
-        out.append(("speed", f"{name}: carry more speed in"))
+        out.append(("speed", f"{name}: carry more speed in", costs.get("speed", 0.1)))
     if s.get("throttle_delta_m") is not None and s["throttle_delta_m"] >= 10:
-        out.append(("power", f"{name}: get to power earlier"))
+        out.append(("power", f"{name}: get to power earlier", costs.get("power", 0.1)))
     if ((s.get("steer_rev_delta") or 0) >= 2
             and (s.get("steer_work_ratio") or 1) >= 1.3):
-        out.append(("hands", f"{name}: busy hands there \u2014 one clean steering input"))
+        out.append(("hands", f"{name}: busy hands there \u2014 one clean steering input", costs.get("hands", 0.15)))
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] >= 10:
-        out.append(("brake", f"{name}: you're braking deep, watch the entry"))
+        out.append(("brake", f"{name}: you're braking deep, watch the entry", 0.10))
     return out
 
 
@@ -1265,15 +1305,19 @@ def _pick_candidate(s, priority=None):
     cands = _cue_candidates(s)
     if not cands:
         return None
+    # v2.6.0: the biggest measured cost wins. A track guide's
+    # per-corner priority (v2.3) no longer picks a class outright --
+    # it biases the costs of its favoured symptoms by 1.5x, so a much
+    # bigger measured problem elsewhere still takes the cue.
     if priority == "exit":
-        for kind, txt in cands:
-            if kind in ("power", "speed"):
-                return kind, txt
+        cands = [(k, t, c * 1.5 if k in ("power", "speed") else c)
+                 for k, t, c in cands]
     elif priority == "entry":
-        for kind, txt in cands:
-            if kind in ("brake", "coast"):
-                return kind, txt
-    return cands[0]
+        cands = [(k, t, c * 1.5 if k in ("brake", "coast") else c)
+                 for k, t, c in cands]
+    cands.sort(key=lambda x: -x[2])  # stable: standing order breaks ties
+    kind, txt, _cost = cands[0]
+    return kind, txt
 
 
 def _cue_text(name, s, priority=None):
@@ -1356,6 +1400,8 @@ class TrackProfile:
         self.corners = []
         self.outline = None   # [[x, y], ...] driven line for the report map
         self.guide = None     # v2.3: track guide dict for this track (see _load_guide)
+        self.ref_dirty = False  # v2.6.0: reference lap contained an off
+        self._from_disk = False
 
     def load(self):
         if os.path.exists(self.path):
@@ -1368,6 +1414,8 @@ class TrackProfile:
                             "hdg": d.get("ref_hdg"), "str": d.get("ref_str")}
                 self.corners = d["corners"]
                 self.outline = d.get("path")
+                self.ref_dirty = bool(d.get("ref_dirty", False))
+                self._from_disk = True
                 return True
             except Exception as e:
                 print(f"[profile] could not load {self.path} ({e}); "
@@ -1383,6 +1431,8 @@ class TrackProfile:
                                     "hdg": d.get("ref_hdg"), "str": d.get("ref_str")}
                         self.corners = d["corners"]
                         self.outline = d.get("path")
+                        self.ref_dirty = bool(d.get("ref_dirty", False))
+                        self._from_disk = True
                         print(f"[profile] recovered {self.key} from the backup file")
                         return True
                     except Exception as e2:
@@ -1391,7 +1441,7 @@ class TrackProfile:
 
     def track_map_path(self):
         """Per-TRACK corner map shared across cars: tracks/<track>__map.json."""
-        track = self.key.rsplit("__", 1)[0]
+        track = self.key.split("__", 1)[0]
         return os.path.join(TRACKS_DIR, track + "__map.json")
 
     def history_path(self):
@@ -1410,6 +1460,7 @@ class TrackProfile:
             "ref_hdg": self.ref.get("hdg"), "ref_str": self.ref.get("str"),
             "corners": self.corners,
             "path": self.outline,
+            "ref_dirty": self.ref_dirty,
         }
         _atomic_write_json(self.path, d)
         # Share this corner map at track level so a DIFFERENT car at
@@ -1654,12 +1705,22 @@ class Coach:
         p = self.profile
         if not p or not corners:
             return
-        track = p.key.rsplit("__", 1)[0]
+        track = p.key.split("__", 1)[0]
         path = _find_data_file(track + "__names.json") or os.path.join(TRACKS_DIR, track + "__names.json")
         try:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
                     mapping = json.load(f)
+                if len(mapping) != len(corners):
+                    # v2.6.0: names are keyed by zone number, so a
+                    # file written for a different corner count would
+                    # silently name the WRONG corners. Generic names
+                    # are the safe fallback.
+                    print(f"[coach] names file {os.path.basename(path)} "
+                          f"covers {len(mapping)} zones but this map "
+                          f"has {len(corners)} -- ignoring it until "
+                          f"the counts match")
+                    return
                 applied = 0
                 for c in corners:
                     nm = mapping.get(str(c["num"]))
@@ -1711,10 +1772,21 @@ class Coach:
         # when a stored reference exists.
         # v2.3: track guide for this profile's track, if one exists
         # (profiles folder first, then the app's guides/ folder).
-        profile.guide = _load_guide(profile.key.rsplit("__", 1)[0])
+        track_part = profile.key.split("__", 1)[0]
+        profile.guide = _load_guide(track_part)
         self._guide_tipped = set()
+        if (profile.guide and profile.corners
+                and len((profile.guide.get("zones") or {}))
+                != len(profile.corners)):
+            # v2.6.0: guide zones are keyed by number like the names;
+            # a count mismatch means the map changed under the guide.
+            print(f"[coach] track guide for {track_part} covers "
+                  f"{len(profile.guide.get('zones') or {})} zones but "
+                  f"this profile has {len(profile.corners)} -- "
+                  f"ignoring it until the counts match")
+            profile.guide = None
         if profile.guide:
-            print(f"[coach] track guide loaded: {profile.key.rsplit('__', 1)[0]}")
+            print(f"[coach] track guide loaded: {track_part}")
         self.history = {"sessions": 0, "laps": 0, "corners": {}}
         try:
             hp = profile.history_path()
@@ -2126,6 +2198,31 @@ class Coach:
         dist = rec["dist_m"]
         p = self.profile
         if p is not None:
+            # v2.6.0 layout guard: AC's shared memory names the track
+            # FOLDER, not the layout, so two layouts of one circuit
+            # would share a profile and silently benchmark each other.
+            # The first lap of the session exposes it -- it measures a
+            # materially different distance than the loaded profile
+            # stored. Switch to a layout-specific profile before any
+            # of this lap's data lands in the wrong one.
+            if (dist and getattr(p, "_from_disk", False)
+                    and p.track_length_m
+                    and not getattr(p, "_layout_checked", False)):
+                p._layout_checked = True
+                if abs(dist - p.track_length_m) / p.track_length_m > 0.03:
+                    new_key = (f"{p.key}__layout"
+                               f"{int(round(dist / 10.0) * 10)}")
+                    np = TrackProfile(new_key)
+                    np.load()
+                    print(f"[coach] this lap measures "
+                          f"{fmt_track_len(dist)} but the loaded profile "
+                          f"is {fmt_track_len(p.track_length_m)} -- a "
+                          f"different layout of the same circuit. "
+                          f"Switching to its own profile.")
+                    self.log("layout_switch", {"from": p.key, "to": new_key,
+                                               "dist_m": dist})
+                    self.set_profile(np)
+                    p = self.profile
             if rec.get("path_pts") and (p.outline is None or self._outline_borrowed):
                 p.outline = rec["path_pts"]
                 self._outline_borrowed = False
@@ -2137,6 +2234,7 @@ class Coach:
                 p.ref = {"spd": spd, "brk": brk, "gas": gas,
                          "hdg": rec.get("hdg"), "str": rec.get("str")}
                 p.best_lap_s = lap_time
+                p.ref_dirty = bool(rec.get("off_events"))
                 if p.corners and self.map_borrowed_from:
                     # Borrowed corner map (another car, same track):
                     # keep its zones and names; this lap only sets the
@@ -2152,7 +2250,8 @@ class Coach:
                 print(f"[coach] reference set: {fmt_lap(lap_time)}, "
                       f"{len(p.corners)} corners, track {fmt_track_len(p.track_length_m)}")
                 self.log("reference_set", {"lap_s": lap_time, "corners": len(p.corners),
-                                           "track_length_m": p.track_length_m})
+                                           "track_length_m": p.track_length_m,
+                                           "ref_dirty": p.ref_dirty})
                 self.speaker.say(f"Reference lap in, {fmt_lap_spoken(lap_time)}. "
                                  f"{len(p.corners)} corners mapped. Coaching starts next lap.")
             else:
@@ -2231,10 +2330,38 @@ class Coach:
                     p.outline = rec["path_pts"]
                     self._outline_borrowed = False
                     p.save()
-                if lap_time < (p.best_lap_s or 1e9):
+                if lap_time < (p.best_lap_s or 1e9) and lap_had_off:
+                    # v2.6.0 (external review): a lap with an off --
+                    # including a cut corner -- must not become the
+                    # reference, or every clean lap afterward reads as
+                    # a loss at that corner. The time stands in the
+                    # log; the benchmark stays the clean lap.
+                    print(f"[coach] {fmt_lap(lap_time)} was faster but "
+                          f"had an off -- the clean reference stays")
+                    self.log("reference_kept_off", {"lap_s": lap_time})
+                elif (getattr(p, "ref_dirty", False) and not lap_had_off
+                        and p.best_lap_s
+                        and lap_time <= p.best_lap_s * 1.03):
+                    # The standing reference itself came from a lap
+                    # with an off (typically the first-ever lap, which
+                    # has to set something). A clean lap within 3%
+                    # takes over as the honest benchmark; the corner
+                    # map does not move.
                     p.ref = {"spd": spd, "brk": brk, "gas": gas,
                          "hdg": rec.get("hdg"), "str": rec.get("str")}
                     p.best_lap_s = lap_time
+                    p.ref_dirty = False
+                    p.save()
+                    print(f"[coach] clean reference in: {fmt_lap(lap_time)} "
+                          f"(the old one had an off in it)")
+                    self.log("reference_cleaned", {"lap_s": lap_time})
+                    self.speaker.say(
+                        f"Clean reference in, {fmt_lap_spoken(lap_time)}.")
+                if lap_time < (p.best_lap_s or 1e9) and not lap_had_off:
+                    p.ref = {"spd": spd, "brk": brk, "gas": gas,
+                         "hdg": rec.get("hdg"), "str": rec.get("str")}
+                    p.best_lap_s = lap_time
+                    p.ref_dirty = False
                     # Keep the corner map stable: v1 re-detected corners
                     # on every new best, so the map grew 6 -> 9 corners
                     # mid-session and "Turn 5" stopped meaning one place.
@@ -2326,21 +2453,36 @@ class Coach:
             avg = sum(r["loss"] for r in clean) / len(clean)
             latest = hist[-1]
             cue_src = latest if not latest.get("off") else clean[-1]
+            # v2.6.0 steadiness (external review): the v1.2 latest-lap
+            # trigger fired a next-lap warning off ONE 0.25 s loss, so
+            # the coach could chase noise. A single lap now qualifies
+            # a corner instantly only on a BIG loss; the old levels
+            # still qualify when another clean lap corroborates the
+            # corner (loss >= 0.15 there too). The multi-lap average
+            # path is unchanged.
+            corroborated = any(r["loss"] >= 0.15 for r in clean
+                               if r is not cue_src)
             cmap = {c["num"]: c for c in self.profile.corners} if self.profile else {}
             if cmap.get(num, {}).get("minor"):
                 # minor zones speak only on a real loss (v2.0)
                 qualifies = (
                     avg >= 0.25
                     or (not latest.get("off") and (
-                        latest["loss"] >= 0.35
-                        or (latest["loss"] >= 0.15 and latest["coast_s"] >= 2.0)))
+                        latest["loss"] >= 0.55
+                        or (latest["loss"] >= 0.15 and latest["coast_s"] >= 3.0)
+                        or (corroborated and (
+                            latest["loss"] >= 0.35
+                            or (latest["loss"] >= 0.15 and latest["coast_s"] >= 2.0)))))
                 )
             else:
                 qualifies = (
                     avg >= float(self.cfg["min_loss_to_speak"])
                     or (not latest.get("off") and (
-                        latest["loss"] >= 0.25
-                        or (latest["loss"] >= 0.10 and latest["coast_s"] >= 1.5)))
+                        latest["loss"] >= 0.45
+                        or (latest["loss"] >= 0.10 and latest["coast_s"] >= 2.5)
+                        or (corroborated and (
+                            latest["loss"] >= 0.25
+                            or (latest["loss"] >= 0.10 and latest["coast_s"] >= 1.5)))))
                 )
             if qualifies:
                 scored.append((max(avg, cue_src["loss"]), num, cue_src))
@@ -2441,6 +2583,19 @@ class Coach:
                     pass  # he was off the track in that zone -- no feedback, it was a save
                 elif res["loss"] >= min_loss:
                     line = f"{c['name']}: lost {tenths_phrase(res['loss'])} there"
+                    # v2.6.0: say WHY, not just how much -- the live
+                    # single-zone analysis already computed the causes
+                    # and the old line threw them away until next
+                    # lap's approach cue (a review point).
+                    fix = corner_cue(
+                        res,
+                        priority=guide_priority(
+                            getattr(self.profile, "guide", None), num),
+                        guide=getattr(self.profile, "guide", None),
+                        symptom_tips=bool(self.cfg.get(
+                            "guide_symptom_tips", True)))
+                    if fix and ": " in fix:
+                        line += f" -- {fix.split(': ', 1)[1]}"
                 elif res["loss"] >= (0.20 if minor else 0.10) and res["coast_s"] >= 2.0:
                     line = (f"{c['name']}: big coast there, costing "
                             f"{tenths_phrase(res['loss'])}")
@@ -2577,11 +2732,26 @@ def make_logger():
 # Live mode
 # --------------------------------------------------------------------------
 
-def sanitize(text):
-    keep = []
-    for ch in text.strip():
-        keep.append(ch if (ch.isalnum() or ch in "_-.") else "_")
-    return "".join(keep) or "unknown"
+def sanitize(s):
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in s).strip("_")
+
+
+def compound_suffix(raw):
+    """AC graphics-page tyre compound -> profile-key suffix (v2.6.0).
+    'Soft (S)' -> 'tc_s'; 'Semislicks' -> 'tc_semislicks'; '' when AC
+    reports nothing usable. A soft-tyre reference used to benchmark
+    every medium-tyre lap as a loss (external review); the compound
+    is part of what a lap was, so it is part of the profile key."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    code = None
+    if "(" in s and ")" in s:
+        code = s[s.index("(") + 1:s.index(")")].strip()
+    slug = sanitize(code if code else s).lower()
+    if not slug or slug == "unknown":
+        return ""
+    return "tc_" + slug
 
 
 
@@ -2919,6 +3089,7 @@ def run_live(cfg):
 
     tele = None
     current_key = None
+    cur_compound = ""
     hint_warned = False
     last_static_check = 0.0
     loop_errors = 0
@@ -2943,17 +3114,49 @@ def run_live(cfg):
             except Exception:
                 time.sleep(0.05)
                 continue
+            cur_compound = (gfx.tyreCompound or "").strip()
             try:
                 now = time.time()
                 if now - last_static_check > 2.0:
                     last_static_check = now
                     st = tele.static()
-                    key = sanitize(f"{st.track}__{st.carModel}")
+                    base_key = sanitize(f"{st.track}__{st.carModel}")
+                    suf = compound_suffix(cur_compound)
+                    key = base_key + (f"__{suf}" if suf else "")
                     if key != current_key:
                         current_key = key
                         profile = TrackProfile(key)
                         if profile.load():
                             print(f"[profile] loaded saved reference for {key}")
+                        elif key != base_key:
+                            # v2.6.0 adoption: the first run under the
+                            # tyre-aware key takes over the pre-existing
+                            # profile (and its history file) instead of
+                            # orphaning Albert's references. The legacy
+                            # file is removed, so a genuinely different
+                            # compound later still starts fresh.
+                            legacy = TrackProfile(base_key)
+                            if legacy.load():
+                                hp_old = legacy.history_path()
+                                legacy.key = key
+                                legacy.path = os.path.join(
+                                    TRACKS_DIR, key + ".json")
+                                legacy.save()
+                                try:
+                                    os.remove(os.path.join(
+                                        TRACKS_DIR, base_key + ".json"))
+                                except Exception:
+                                    pass
+                                hp_new = legacy.history_path()
+                                if os.path.exists(hp_old) and hp_old != hp_new:
+                                    try:
+                                        os.replace(hp_old, hp_new)
+                                    except Exception:
+                                        pass
+                                profile = legacy
+                                print(f"[profile] adopted your saved "
+                                      f"{base_key} reference under the "
+                                      f"tyre-aware key {key}")
                         if cfg.get("_remap") and (profile.ref is not None or profile.corners):
                             # One-shot --remap: forget this car/track's
                             # reference and map (plus the shared track
