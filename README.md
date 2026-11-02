@@ -493,3 +493,10 @@ legacy tracks folder) without overwriting. `profile_dir` still
 overrides, and a relative value is taken from the app folder.
 With the git-clone workflow this makes one folder the whole
 setup: pull updates the code, profiles stay untouched.
+
+**v2.5.1** — the report map now follows your driving instead of
+freezing on the first lap ever driven on a combo (which baked an
+exploratory lap's wrong turns and recoveries into every report —
+spotted at Willow Springs). The stored outline is refreshed by
+every clean, counted lap; laps with an off or out laps leave it
+alone.

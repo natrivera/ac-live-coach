@@ -164,7 +164,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.5.0"
+VERSION = "2.5.1"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -2047,6 +2047,7 @@ class Coach:
                 # not an accident: from then on it counts as line and
                 # gets coached like any other corner (Albert: the
                 # summaries "repeat events from other laps", Nov 1).
+                lap_had_off = any(r.get("off") for r in results)
                 repeat_limit = int(self.cfg.get("off_repeat_laps", 3))
                 for r in results:
                     if r.get("off"):
@@ -2099,6 +2100,18 @@ class Coach:
                     print(f"[lap] out/in lap ({fmt_lap(lap_time)}) -- no coaching")
                 else:
                     self._speak_lap_summary(lap_time, results)
+                # v2.5.1: the report outline follows the latest
+                # CLEAN counted lap. It used to freeze on the first
+                # lap ever driven on the combo, so an exploratory
+                # first lap -- wrong turn, spin recovery, pit drive
+                # -- baked its excursions into every report forever
+                # (Willow Springs, Nov 2: a spike that is not on the
+                # real circuit outlived four cleaner laps).
+                if (not out_lap and not lap_had_off
+                        and rec.get("path_pts")):
+                    p.outline = rec["path_pts"]
+                    self._outline_borrowed = False
+                    p.save()
                 if lap_time < (p.best_lap_s or 1e9):
                     p.ref = {"spd": spd, "brk": brk, "gas": gas,
                          "hdg": rec.get("hdg"), "str": rec.get("str")}
