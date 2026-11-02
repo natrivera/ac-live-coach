@@ -103,22 +103,28 @@ def _migrate_profiles(legacy, dest):
 
 
 def resolve_tracks_dir(cfg):
-    """Profiles must survive coach updates, so from v1.7 they live
-    OUTSIDE the app folder -- in the Assetto Corsa folder itself
-    (Albert's choice, Nov 1; through Oct he kept losing profiles
-    because each version was unzipped into a fresh folder and the
-    profiles lived in the old one). Resolution order: the
-    'profile_dir' config setting (the exact folder for the JSONs),
-    then <AC install>\\ACLiveCoach\\tracks, then the Documents
-    Assetto Corsa folder, then the legacy app folder. The first
-    writable candidate wins and legacy profiles are migrated once.
-    """
+    """Profiles live in a `profiles` folder inside the app folder
+    (v2.5: the reference is relative to the app folder, and the
+    folder is created if it does not exist -- so the whole setup
+    travels as one folder, and a git pull in that folder updates
+    the code while profiles stay put). The 'profile_dir' config
+    setting overrides; a relative value is taken relative to the
+    app folder. On first run, profiles from the previous homes
+    (the AC install's ACLiveCoach\\profiles, the Documents
+    Assetto Corsa folder, the legacy app-folder tracks\\) are
+    copied in -- never overwriting -- so standing data follows.
+    If the app folder is not writable, the old locations are
+    tried as a fallback."""
     global TRACKS_DIR
     legacy = os.path.join(APP_DIR, "tracks")
-    candidates = []
     pd = (cfg or {}).get("profile_dir") or os.environ.get("ACLIVECOACH_PROFILE_DIR")
     if pd:
-        candidates.append(("profile_dir setting", pd))
+        primary = pd if os.path.isabs(pd) else os.path.join(APP_DIR, pd)
+        label = "profile_dir setting"
+    else:
+        primary = os.path.join(APP_DIR, "profiles")
+        label = "app folder"
+    candidates = [(label, primary)]
     for ac in _ac_install_candidates():
         if os.path.isdir(ac):
             candidates.append(("Assetto Corsa folder",
@@ -129,27 +135,36 @@ def resolve_tracks_dir(cfg):
                            os.path.join(docs, "ACLiveCoach", "profiles")))
     candidates.append(("app folder (legacy)", legacy))
     for label, path in candidates:
-        if _writable_dir(path):
-            TRACKS_DIR = path
-            moved = _migrate_profiles(legacy, path)
-            # v1.7 put them in ACLiveCoach\tracks for one build; if
-            # that folder exists next to the new profiles\ home,
-            # migrate from it too.
-            if os.path.basename(path) == "profiles":
-                moved += _migrate_profiles(
-                    os.path.join(os.path.dirname(path), "tracks"), path)
-            msg = f"[profiles] storing profiles in: {path} ({label})"
-            if moved:
-                msg += f" -- migrated {moved} profile file(s)"
-            print(msg)
-            return path
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception:
+            continue
+        if not _writable_dir(path):
+            continue
+        TRACKS_DIR = path
+        legacy_homes = [legacy]
+        for ac in _ac_install_candidates():
+            legacy_homes.append(os.path.join(ac, "ACLiveCoach", "profiles"))
+            legacy_homes.append(os.path.join(ac, "ACLiveCoach", "tracks"))
+        legacy_homes.append(os.path.join(
+            os.path.expanduser("~"), "Documents", "Assetto Corsa",
+            "ACLiveCoach", "profiles"))
+        moved = 0
+        for home in legacy_homes:
+            moved += _migrate_profiles(home, path)
+        msg = f"[profiles] storing profiles in: {path} ({label})"
+        if moved:
+            msg += f" -- migrated {moved} profile file(s)"
+        print(msg)
+        return path
     TRACKS_DIR = legacy
     print(f"[profiles] storing profiles in: {legacy} (fallback)")
     return legacy
 
+
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.4.1"
+VERSION = "2.5.0"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -166,7 +181,7 @@ DEFAULT_CONFIG = {
     "off_min_duration_2tyres_s": 0.9,  # a 2-tyre excursion must last this long to excuse
     "off_repeat_laps": 3,         # same corner excused this many laps running -> it counts as line
     "out_lap_briefing": True,     # explain the out-lap rules (and best use of the lap) once per session
-    "profile_dir": "",            # exact folder for profile JSONs; empty = auto (Assetto Corsa folder)
+    "profile_dir": "",            # folder for profile JSONs; empty = <app folder>/profiles; relative paths are taken from the app folder
     "max_approach_cues_per_lap": 5,
     "cue_cooldown_s": 6.0,        # minimum gap between spoken lines
     "open_report_window": True,   # pop the post-session map report in a browser

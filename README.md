@@ -67,9 +67,9 @@ subscription, no cloud, nothing leaves the machine.
 4. Drive. The first lap at a new combo maps; from lap 2 the coaching
    starts.
 5. When you're done, click the console window and press **Ctrl+C**.
-   A summary prints and the debrief is finalized. Run the coach from
-   the same folder every time — your saved profiles persist between
-   versions as long as the folder stays put.
+   A summary prints and the debrief is finalized. Keep the coach in
+   one folder — its `profiles` subfolder holds your saved reference
+   laps and corner maps.
 
 ## Corner names (optional)
 
@@ -89,9 +89,12 @@ Buttonwillow is built in; everywhere else starts as Turn N.)
 - `logs/debrief_*.txt` — the readable version of the session.
 - `logs/report_*.html` — the post-session report page.
 - Your **profiles** (reference lap + corner map per car/track) live
-  in `ACLiveCoach\profiles` inside your Assetto Corsa install
-  folder, so they survive coach updates. The console prints the exact
-  path at startup.
+  in a `profiles` folder inside the coach folder itself, created
+  automatically on first run. They survive code updates (including
+  `git pull`) because updates never touch that folder; if you move
+  the coach folder, the profiles move with it. Profiles saved by
+  older versions in the Assetto Corsa folder are copied in on first
+  run. The console prints the exact path at startup.
 - `voices/` — the downloaded neural voice model (Piper).
 
 Those log files are the tuning loop: every cue the coach spoke, and
@@ -480,3 +483,13 @@ chart: speed (mph) with each corner's brake point, apex and
 throttle point marked, brake/throttle traces below, distance in
 feet — drawn from the stored reference lap, inline in the report
 (no extra files). Omitted until a reference lap exists.
+
+**v2.5.0** — profiles move home (again, and simpler): they now
+live in a `profiles` folder inside the app folder — a reference
+relative to wherever the coach folder is — created automatically
+if missing. First run copies in any profiles from the previous
+homes (the AC install's ACLiveCoach\profiles, Documents, the
+legacy tracks folder) without overwriting. `profile_dir` still
+overrides, and a relative value is taken from the app folder.
+With the git-clone workflow this makes one folder the whole
+setup: pull updates the code, profiles stay untouched.
