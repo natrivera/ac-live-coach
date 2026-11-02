@@ -500,3 +500,11 @@ exploratory lap's wrong turns and recoveries into every report —
 spotted at Willow Springs). The stored outline is refreshed by
 every clean, counted lap; laps with an off or out laps leave it
 alone.
+
+**v2.5.2** — corner-name and track-guide files are now also read
+from the pre-v2.5 profile homes (the Assetto Corsa folder's
+ACLiveCoach\profiles, Documents, the legacy tracks folder) when
+they aren't in the current profiles folder. The v2.5 move made
+files dropped in the old location by habit silently do nothing;
+the current folder still wins when both exist, and the console
+prints the full path of the names file it applied.

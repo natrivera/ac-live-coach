@@ -102,6 +102,33 @@ def _migrate_profiles(legacy, dest):
     return moved
 
 
+
+def _legacy_data_dirs():
+    """Folders profiles lived in before v2.5 moved them into the app
+    folder. Profiles themselves stay in the current home, but
+    user-edited data files (corner names, track guides) are still
+    READ from the old homes when not found in the current one
+    (v2.5.2) -- a names file dropped in the pre-v2.5 location by
+    habit keeps working instead of silently doing nothing."""
+    dirs = []
+    for ac in _ac_install_candidates():
+        dirs.append(os.path.join(ac, "ACLiveCoach", "profiles"))
+    dirs.append(os.path.join(os.path.expanduser("~"), "Documents",
+                             "Assetto Corsa", "ACLiveCoach", "profiles"))
+    dirs.append(os.path.join(APP_DIR, "tracks"))
+    return dirs
+
+
+def _find_data_file(filename):
+    """First existing copy of a user data file: the current profiles
+    folder first, then the legacy homes. None if it exists nowhere."""
+    for base in [TRACKS_DIR] + _legacy_data_dirs():
+        path = os.path.join(base, filename)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def resolve_tracks_dir(cfg):
     """Profiles live in a `profiles` folder inside the app folder
     (v2.5: the reference is relative to the app folder, and the
@@ -164,7 +191,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.5.1"
+VERSION = "2.5.2"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -1333,7 +1360,7 @@ def _load_guide(track):
     distilled offline into <track>__guide.json -- looked for next to
     the profiles first, then in the app folder's guides/. Returns
     the parsed dict or None. Coaching is unchanged without one."""
-    for base in (TRACKS_DIR, os.path.join(APP_DIR, "guides")):
+    for base in [TRACKS_DIR] + _legacy_data_dirs() + [os.path.join(APP_DIR, "guides")]:
         path = os.path.join(base, track + "__guide.json")
         try:
             if os.path.exists(path):
@@ -1540,7 +1567,7 @@ class Coach:
         if not p or not corners:
             return
         track = p.key.rsplit("__", 1)[0]
-        path = os.path.join(TRACKS_DIR, track + "__names.json")
+        path = _find_data_file(track + "__names.json") or os.path.join(TRACKS_DIR, track + "__names.json")
         try:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
@@ -1553,7 +1580,7 @@ class Coach:
                         applied += 1
                 if applied:
                     print(f"[coach] names file applied: {applied} zone "
-                          f"names from {os.path.basename(path)}")
+                          f"names from {path}")
             else:
                 starter = {str(c["num"]): c["name"] for c in corners}
                 os.makedirs(TRACKS_DIR, exist_ok=True)
