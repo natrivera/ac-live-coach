@@ -474,3 +474,9 @@ optional once-per-session spoken tips). Config kill switch:
 guide_symptom_tips (default true). The Buttonwillow guide ships
 with 8 tagged tips, e.g. Phil Hill brake -> "Brake as late as
 the car allows", Esses coast -> "Flat out until the fourth S".
+
+**v2.4.1** — the session report gains the reference-lap trace
+chart: speed (mph) with each corner's brake point, apex and
+throttle point marked, brake/throttle traces below, distance in
+feet — drawn from the stored reference lap, inline in the report
+(no extra files). Omitted until a reference lap exists.

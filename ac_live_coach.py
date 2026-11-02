@@ -149,7 +149,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.4.0"
+VERSION = "2.4.1"
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -2429,6 +2429,91 @@ def sanitize(text):
     return "".join(keep) or "unknown"
 
 
+
+def _trace_svg(p):
+    """Reference-lap speed + pedal traces as inline SVG (v2.4.1) --
+    the chart Albert asked to see in the report: speed (mph) on top,
+    brake/throttle below, corner markers at each zone's brake point,
+    apex and throttle point. Returns "" without a reference lap."""
+    if p is None or not p.ref or not p.ref.get("spd"):
+        return ""
+    spd_kmh = p.ref["spd"]
+    brk = p.ref.get("brk") or [0.0] * len(spd_kmh)
+    gas = p.ref.get("gas") or [0.0] * len(spd_kmh)
+    n = len(spd_kmh)
+    bin_ft = (p.bin_m or 2.2) * FT_PER_M
+    total_ft = n * bin_ft
+    mph = [v * MPH_PER_KMH for v in spd_kmh]
+    lo = max(0.0, min(mph) - 4)
+    hi = max(mph) + 4
+    W, L, R = 960, 46, 10
+    ST, SB = 34, 214          # speed panel top/bottom
+    PT, PB = 244, 312          # pedal panel top/bottom
+
+    def X(b):
+        return L + (W - L - R) * (b / max(1, n - 1))
+
+    def Y(v):
+        return SB - (SB - ST) * ((v - lo) / max(1.0, hi - lo))
+
+    parts = [f'<svg viewBox="0 0 {W} 344" width="100%" '
+             f'xmlns="http://www.w3.org/2000/svg" role="img">']
+    for frac in (0.0, 0.5, 1.0):
+        v = lo + frac * (hi - lo)
+        y = Y(v)
+        parts.append(f'<line x1="{L}" y1="{y:.0f}" x2="{W - R}" y2="{y:.0f}" '
+                     f'stroke="#e3e5e8"/>')
+        parts.append(f'<text x="{L - 5}" y="{y + 4:.0f}" font-size="11" '
+                     f'fill="#555" text-anchor="end">{v:.0f}</text>')
+    parts.append(f'<text x="4" y="{(ST + SB) / 2:.0f}" font-size="11" fill="#555" '
+                 f'transform="rotate(-90 12 {(ST + SB) / 2:.0f})" '
+                 f'text-anchor="middle">mph</text>')
+    pts = " ".join(f"{X(b):.0f},{Y(mph[b]):.0f}" for b in range(0, n, 2))
+    parts.append(f'<polyline points="{pts}" fill="none" stroke="#1a56db" '
+                 f'stroke-width="1.6"/>')
+    for i, c in enumerate(p.corners or []):
+        ab = c.get("apex_bin")
+        if ab is None:
+            continue
+        ax = X(ab)
+        parts.append(f'<line x1="{ax:.0f}" y1="{ST}" x2="{ax:.0f}" y2="{SB}" '
+                     f'stroke="#9aa0a6" stroke-dasharray="3 3"/>')
+        parts.append(f'<circle cx="{ax:.0f}" cy="{Y(mph[ab]):.0f}" r="3.4" fill="#111"/>')
+        bb = c.get("brake_bin")
+        if c.get("has_brake_zone") and bb is not None:
+            bx, by = X(bb), Y(mph[bb])
+            parts.append(f'<path d="M {bx - 5:.0f} {by - 9:.0f} h 10 l -5 9 z" fill="#d64545"/>')
+        tb = c.get("throttle_bin")
+        if tb is not None:
+            tx, ty = X(tb), Y(mph[tb])
+            parts.append(f'<path d="M {tx - 5:.0f} {ty + 9:.0f} h 10 l -5 -9 z" fill="#2e9e5b"/>')
+        name = c.get("name") or f"Turn {c.get('num')}"
+        ly = 14 if i % 2 == 0 else 27
+        parts.append(f'<text x="{ax:.0f}" y="{ly}" font-size="10.5" fill="#333" '
+                     f'text-anchor="middle">{c.get("num")} {html.escape(str(name))}</text>')
+    for series, color in ((brk, "#d64545"), (gas, "#2e9e5b")):
+        pts = " ".join(f"{X(b):.0f},{PB - (PB - PT) * max(0.0, min(1.0, series[b])):.0f}"
+                       for b in range(0, n, 4))
+        parts.append(f'<polyline points="{L},{PB} {pts} {X(n - 1):.0f},{PB}" '
+                     f'fill="{color}" opacity="0.4" stroke="none"/>')
+    parts.append(f'<line x1="{L}" y1="{PB}" x2="{W - R}" y2="{PB}" stroke="#c9ccd1"/>')
+    parts.append(f'<text x="{L - 5}" y="{(PT + PB) / 2 + 4:.0f}" font-size="11" '
+                 f'fill="#555" text-anchor="end">pedals</text>')
+    tick = 0
+    while tick <= total_ft:
+        b = tick / bin_ft
+        parts.append(f'<text x="{X(b):.0f}" y="334" font-size="11" fill="#555" '
+                     f'text-anchor="middle">{tick:,.0f}</text>')
+        tick += 2000
+    parts.append(f'<text x="{(L + W - R) / 2:.0f}" y="344" font-size="0" fill="#555"></text>')
+    parts.append("</svg>")
+    parts.append('<p class="legend"><span style="color:#d64545">&#9660; brake point</span>'
+                 '<span style="color:#111">&#9679; apex</span>'
+                 '<span style="color:#2e9e5b">&#9650; back to full throttle</span>'
+                 '<span>Distance in feet</span></p>')
+    return "<h2>Reference lap — speed &amp; pedals</h2>\n" + "\n".join(parts) + "\n"
+
+
 def build_report_html(coach):
     """Post-session report: driven-line map with the coach's own turn
     numbers on it, plus the session's key coaching points. The turn
@@ -2581,6 +2666,7 @@ def build_report_html(coach):
                             f" \u2014 {esc(srcmeta.get('channel', ''))}</p>")
             guide_html = "<h2>Track guide</h2>" + src_line + "\n".join(blocks) + "\n"
 
+    trace_html = _trace_svg(p)
     summary_txt = "\n".join(coach.session_summary_lines())
     best = fmt_lap(p.best_lap_s) if p and p.best_lap_s else "—"
     track = esc(p.key) if p else "unknown"
@@ -2609,7 +2695,7 @@ pre {{ background: #f4f5f7; padding: 12px; border-radius: 6px; white-space: pre-
 {points_html}
 <h2>Corner data (averages vs your best lap)</h2>
 {table_html}
-{guide_html}<h2>Session summary</h2>
+{trace_html}{guide_html}<h2>Session summary</h2>
 <pre>{esc(summary_txt)}</pre>
 <p class="sub">Map drawn from your own driven line (heading + distance integration).
 Corners where you left the track (2+ tyres off) are excluded from the averages —
