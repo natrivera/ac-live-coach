@@ -3123,6 +3123,16 @@ def run_live(cfg):
                     base_key = sanitize(f"{st.track}__{st.carModel}")
                     suf = compound_suffix(cur_compound)
                     key = base_key + (f"__{suf}" if suf else "")
+                    if (not suf and current_key
+                            and current_key.startswith(base_key + "__tc_")):
+                        # v2.6.1: an EMPTY compound read is no
+                        # information, not a new compound -- AC clears
+                        # the field when a session ends (seen in the
+                        # Nov 2 15:57 log, which stamped a fresh
+                        # no-compound profile on exit). Keep the
+                        # compound key; a change to a DIFFERENT
+                        # non-empty compound still switches profiles.
+                        key = current_key
                     if key != current_key:
                         current_key = key
                         profile = TrackProfile(key)

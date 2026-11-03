@@ -143,6 +143,9 @@ say.
 
 ## Changelog
 
+### v2.6.1
+- An empty tyre-compound read no longer drops the profile to the no-compound key: AC clears the field when a session ends, which stamped a spurious fresh profile in the first v2.6.0 log. A change to a different non-empty compound still switches profiles.
+
 ### v2.6.0
 - **Reference integrity (external review):** a lap containing an off -- including a cut corner -- can no longer become the reference lap. If the standing reference itself came from such a lap (typically the first-ever lap, which has to set something), the next clean lap within 3% takes over as the honest benchmark.
 - **Cues ranked by measured cost:** the spoken fix at a corner is now the symptom with the largest estimated time cost (braking/throttle distances at the span's reference average speed, apex-speed deficit over the span's time, coast seconds), instead of the first symptom in a fixed order. A track guide's priority biases its favoured symptoms 1.5x rather than picking the class outright.
