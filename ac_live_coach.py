@@ -201,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.10.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.10.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -454,6 +454,7 @@ def _comms_fx(wav_bytes, click=True):
     the audio untouched, because the effect must never eat a cue."""
     import io
     import math
+    import random
     import sys
     import wave
     from array import array
@@ -470,9 +471,13 @@ def _comms_fx(wav_bytes, click=True):
             samples.byteswap()
         x = [v / 32768.0 for v in samples]
         dt = 1.0 / rate
-        # high-pass ~350 Hz (one-pole, two passes -- radios roll
-        # off the lows hard; one pass leaves too much rumble)
-        rc = 1.0 / (2.0 * math.pi * 350.0)
+        # The comms channel, deliberately overdone (v2.10.1: the
+        # first cut was too polite -- the driver heard the click
+        # but wanted real radio distortion). Band-limit hard, drive
+        # it into saturation, then crush the resolution like a
+        # cheap digital radio, with an open-channel hiss under it.
+        # high-pass ~400 Hz (one-pole, two passes)
+        rc = 1.0 / (2.0 * math.pi * 400.0)
         a_hp = rc / (rc + dt)
         y = list(x)
         for _ in range(2):
@@ -482,16 +487,36 @@ def _comms_fx(wav_bytes, click=True):
                 prev_y = a_hp * (prev_y + v - prev_x)
                 y[i] = prev_y
                 prev_x = v
-        # low-pass ~3.4 kHz, two passes for a steeper shoulder
-        rc = 1.0 / (2.0 * math.pi * 3400.0)
+        # low-pass ~2.9 kHz, two passes
+        rc = 1.0 / (2.0 * math.pi * 2900.0)
         a_lp = dt / (rc + dt)
         for _ in range(2):
             acc = 0.0
             for i, v in enumerate(y):
                 acc += a_lp * (v - acc)
                 y[i] = acc
-        # saturation (the grit), then normalize the level
-        y = [math.tanh(1.8 * v) for v in y]
+        # drive: hard into the tanh shoulder -- transmitted radios clip
+        y = [math.tanh(3.2 * v) for v in y]
+        # resolution crush: half-rate, coarsely quantized, stretched
+        # back to full rate -- the digital-radio crunch
+        half = [round(v * 48.0) / 48.0 for v in y[::2]]
+        crushed = [0.0] * len(y)
+        for i, v in enumerate(half):
+            crushed[2 * i] = v
+            if 2 * i + 1 < len(crushed):
+                nxt = half[i + 1] if i + 1 < len(half) else v
+                crushed[2 * i + 1] = 0.5 * (v + nxt)
+        y = crushed
+        # open-channel hiss under the voice (fixed seed, so a cue
+        # sounds the same every time it is spoken)
+        rng = random.Random(20261103)
+        noise = [rng.uniform(-1.0, 1.0) for _ in y]
+        acc = 0.0
+        for i, v in enumerate(noise):
+            acc += a_lp * (v - acc)
+            noise[i] = acc
+        y = [v + 0.055 * n for v, n in zip(y, noise)]
+        # normalize the level
         peak = max((abs(v) for v in y), default=0.0)
         if peak > 1e-4:
             g = 0.89 / peak

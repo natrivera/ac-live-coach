@@ -143,6 +143,9 @@ say.
 
 ## Changelog
 
+### v2.10.1
+- **Comms fx, hotter:** the first cut was too polite. The chain now band-limits harder (~400 Hz–2.9 kHz), drives the saturation roughly twice as hard (transmitted radios clip), then crushes the resolution — half-rate, coarsely quantized, stretched back — for the cheap-digital-radio crunch, with a low open-channel hiss under the voice. The click is unchanged. If it overshoots, `voice_comms_fx` still turns the whole treatment off.
+
 ### v2.10.0
 - **Pit-radio voice (comms fx):** Piper cues now pass through a comms treatment before playback — band-limited to the radio channel (~350 Hz high-pass, two passes; ~3.4 kHz low-pass, two passes), a touch of saturation for grit, level normalized — preceded by a short key-up blip (30 ms tone + 25 ms) like an engineer keying the mic. On by default (`voice_comms_fx`), with the click separately switchable (`voice_comms_click`). Piper path only: SAPI speaks directly and can't be processed. Pure stdlib DSP; any unexpected audio format passes through untouched.
 - Tests grow to 43 checks, including band-limit and click-prefix measurements on the effect itself.
