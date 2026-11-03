@@ -214,6 +214,7 @@ DEFAULT_CONFIG = {
     "approach_distance_m": 260,   # how far before the brake zone the cue fires
     "min_loss_to_speak": 0.15,    # seconds; smaller losses stay silent
     "exit_min_loss_s": 0.2,       # in-corner loss needed for instant feedback
+    "record_frames": True,        # v2.7.0: raw 10 Hz frames into the session log (replayable)
     "off_min_duration_s": 0.35,   # shortest 3+ tyres-off excursion that excuses a corner
     "off_min_duration_2tyres_s": 0.9,  # a 2-tyre excursion must last this long to excuse
     "off_repeat_laps": 3,         # same corner excused this many laps running -> it counts as line
@@ -1169,7 +1170,7 @@ def _span_stats(lap_spd, lap_brk, lap_gas, lap_str, ref, z0, z1,
 
 def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
                 off_events=None, off_min_s=0.35, off_2_min_s=0.9,
-                lap_str=None):
+                lap_str=None, slip_events=None):
     """Compare one lap against the reference, corner by corner.
 
     off_events: excursions where AC reported 2+ tyres off the track,
@@ -1208,6 +1209,21 @@ def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
         res.update(st)
         res["off"] = off
         res["off_dur_s"] = round(off_dur, 2)
+        # v2.7.0: lockup / wheelspin seconds inside this zone, from
+        # the physics-page events feed() recorded (same overlap rule
+        # as offs, entry margin included).
+        lockup_s = spin_s = 0.0
+        if slip_events:
+            smargin = max(4, int(30 / bin_m))
+            slo = c["zone_start"] - smargin
+            for ev in slip_events:
+                if any(slo <= b <= c["zone_end"] for b in ev["bins"]):
+                    if ev["kind"] == "lockup":
+                        lockup_s += ev["dur_s"]
+                    else:
+                        spin_s += ev["dur_s"]
+        res["lockup_s"] = round(lockup_s, 2)
+        res["spin_s"] = round(spin_s, 2)
         if c.get("phases"):
             phs = []
             for ph in c["phases"]:
@@ -1274,6 +1290,10 @@ def _cue_candidates(s):
     name = s["name"]
     costs = _symptom_costs(s)
     out = []
+    if s.get("lockup_s", 0) >= 0.25:
+        out.append(("lockup", f"{name}: you're locking the fronts there \u2014 come off the first brake hit softer", 0.4 + s["lockup_s"]))
+    if s.get("spin_s", 0) >= 0.25:
+        out.append(("spin", f"{name}: wheelspin there \u2014 feed the power in, don't grab it", 0.4 + s["spin_s"]))
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] <= -8:
         out.append(("brake", f"{name}: brake later", costs.get("brake", 0.1)))
     if s["coast_s"] >= 0.5:
@@ -1310,10 +1330,10 @@ def _pick_candidate(s, priority=None):
     # it biases the costs of its favoured symptoms by 1.5x, so a much
     # bigger measured problem elsewhere still takes the cue.
     if priority == "exit":
-        cands = [(k, t, c * 1.5 if k in ("power", "speed") else c)
+        cands = [(k, t, c * 1.5 if k in ("power", "speed", "spin") else c)
                  for k, t, c in cands]
     elif priority == "entry":
-        cands = [(k, t, c * 1.5 if k in ("brake", "coast") else c)
+        cands = [(k, t, c * 1.5 if k in ("brake", "coast", "lockup") else c)
                  for k, t, c in cands]
     cands.sort(key=lambda x: -x[2])  # stable: standing order breaks ties
     kind, txt, _cost = cands[0]
@@ -1340,6 +1360,9 @@ def corner_cue(res, brake_only=False, priority=None, guide=None, symptom_tips=Tr
     if res is None or res.get("off"):
         return None
     if brake_only:
+        if res.get("lockup_s", 0) >= 0.25:
+            return (f"{res['name']}: you're locking the fronts there "
+                    f"\u2014 come off the first brake hit softer")
         bd = res.get("brake_delta_m")
         if bd is not None and bd <= -8:
             return f"{res['name']}: brake later"
@@ -1461,6 +1484,7 @@ class TrackProfile:
             "corners": self.corners,
             "path": self.outline,
             "ref_dirty": self.ref_dirty,
+            "schema": 1,
         }
         _atomic_write_json(self.path, d)
         # Share this corner map at track level so a DIFFERENT car at
@@ -1568,6 +1592,7 @@ class Coach:
         self.history = None        # v2.1.0: cross-session per-combo history
         self._live_losses = {}     # v2.1.0: this lap's live per-zone results (section feedback)
         self.lap_records = []      # per-lap summaries for the debrief
+        self._last_lap_spd = None  # v2.7.0: last counted lap's trace (report)
         self.approach_fired = set()
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
@@ -1888,6 +1913,9 @@ class Coach:
         self.lap_valid_time = True
         self._off_events = []        # closed 2+ tyres-off excursions this lap
         self._off_cur = None         # excursion in progress, if any
+        self._slip_events = []       # closed lockup/wheelspin events this lap
+        self._slip_open = {}         # kind -> in-progress slip event
+        self._lap_penalty = False    # AC flagged a penalty this lap
         self._px = 0.0
         self._py = 0.0
         self._lap_path = []          # [(pos, x, y)] driven-line samples
@@ -1900,6 +1928,51 @@ class Coach:
         ev["dur_s"] = max(0.0, t - ev.pop("start_t"))
         self._off_events.append(ev)
         self._off_cur = None
+
+    def _slip_update(self, t, pos, speed_kmh, brake, gas, wheel_w, wheel_r):
+        """Lockup and wheelspin detection from the physics page
+        (v2.7.0, from an external review: the coach already received
+        wheelAngularSpeed and never used it). Each wheel's tangential
+        speed (angular speed x tyre radius, from the static page) is
+        compared with the car's speed: a front wheel turning much
+        slower than the car under braking is locking; a rear wheel
+        turning much faster under power is spinning. Events need
+        0.18 s to count and tolerate a 0.12 s flicker gap, so one
+        noisy frame can't fake or split an event."""
+        if not wheel_w or len(wheel_w) < 4:
+            return
+        v = max(speed_kmh / 3.6, 3.0)
+        radii = wheel_r if (wheel_r and len(wheel_r) >= 4) else [0.33] * 4
+        ratios = [(wheel_w[i] * radii[i] - v) / v for i in range(4)]
+        conds = {}
+        if speed_kmh > 40 and brake > 0.25:
+            conds["lockup"] = min(ratios[0], ratios[1]) < -0.22
+        if speed_kmh > 40 and gas > 0.65:
+            conds["spin"] = max(ratios[2], ratios[3]) > 0.28
+        bin_now = int(pos * NBINS) % NBINS
+        for kind in ("lockup", "spin"):
+            st = self._slip_open.get(kind)
+            if conds.get(kind):
+                if st is None:
+                    st = {"start_t": t, "last_t": t, "bins": set()}
+                    self._slip_open[kind] = st
+                st["last_t"] = t
+                st["bins"].add(bin_now)
+            elif st is not None and t - st["last_t"] > 0.12:
+                self._close_slip_event(kind)
+
+    def _close_slip_event(self, kind):
+        st = self._slip_open.pop(kind, None)
+        if st is None:
+            return
+        dur = st["last_t"] - st["start_t"]
+        if dur >= 0.18:
+            self._slip_events.append(
+                {"kind": kind, "bins": st["bins"], "dur_s": round(dur, 2)})
+
+    def _close_slip_events(self):
+        for kind in list(self._slip_open):
+            self._close_slip_event(kind)
 
     # -- main feed ----------------------------------------------------------
     # What the driver hears once per session. History: v1.9.1 added
@@ -2006,7 +2079,8 @@ class Coach:
         self.speaker.say(a)
 
     def feed(self, t, pos, speed_kmh, brake, gas, dist_m, live=True, ict_ms=None,
-             heading=None, tyres_out=None, steer=None):
+             heading=None, tyres_out=None, steer=None,
+             wheel_w=None, wheel_r=None, flag=None, penalty_s=None):
         # A NaN position raises inside the binning math (int(nan));
         # a non-finite frame is dropped, never fatal (v2.5.3).
         if pos is None or speed_kmh is None or not (
@@ -2052,6 +2126,10 @@ class Coach:
             self._off_cur["max_tyres"] = max(self._off_cur["max_tyres"], tyres_out)
         elif self._off_cur is not None:
             self._close_off_event(t)
+        if wheel_w is not None:
+            self._slip_update(t, pos, speed_kmh, brake, gas, wheel_w, wheel_r)
+        if flag == 6 or (penalty_s is not None and penalty_s > 0.05):
+            self._lap_penalty = True
         # A car crawling or stopped for a while is in the pits or
         # recovering, not on a flyer: the lap after it is an out lap.
         if speed_kmh < 5:
@@ -2149,12 +2227,15 @@ class Coach:
         spd, brk, gas, hdg, steer = self.bins.arrays()
         path_pts = self._close_path(self._lap_path) if valid else None
         self._close_off_event(t)
+        self._close_slip_events()
         self.pending_finishes.append({
             "t_finish": t, "dur_s": dur, "dist_m": dist, "skip": not valid,
             "ict_peak_s": (self._ict_peak_ms / 1000.0) if self._ict_peak_ms else None,
             "spd": spd, "brk": brk, "gas": gas, "hdg": hdg, "str": steer,
             "path_pts": path_pts,
             "off_events": list(self._off_events),
+            "slip_events": list(self._slip_events),
+            "penalty": bool(self._lap_penalty),
             "muted": bool(self._lap_muted),
         })
         self._ict_peak_ms = 0
@@ -2234,7 +2315,8 @@ class Coach:
                 p.ref = {"spd": spd, "brk": brk, "gas": gas,
                          "hdg": rec.get("hdg"), "str": rec.get("str")}
                 p.best_lap_s = lap_time
-                p.ref_dirty = bool(rec.get("off_events"))
+                p.ref_dirty = (bool(rec.get("off_events"))
+                               or bool(rec.get("penalty")))
                 if p.corners and self.map_borrowed_from:
                     # Borrowed corner map (another car, same track):
                     # keep its zones and names; this lap only sets the
@@ -2259,13 +2341,19 @@ class Coach:
                                       off_events=rec.get("off_events"),
                                       off_min_s=float(self.cfg.get("off_min_duration_s", 0.35)),
                                       off_2_min_s=float(self.cfg.get("off_min_duration_2tyres_s", 0.9)),
-                                      lap_str=rec.get("str"))
+                                      lap_str=rec.get("str"),
+                                      slip_events=rec.get("slip_events"))
                 # An excused corner is a save -- once. The same corner
                 # excused off_repeat_laps times running is a pattern,
                 # not an accident: from then on it counts as line and
                 # gets coached like any other corner (Albert: the
                 # summaries "repeat events from other laps", Nov 1).
                 lap_had_off = any(r.get("off") for r in results)
+                # v2.7.0: an AC penalty on the lap blocks the
+                # reference exactly like an off does (the reviewer's
+                # "validity data" point; the offs rule stays primary
+                # in practice sessions, where penalties are rare).
+                lap_blocked = lap_had_off or bool(rec.get("penalty"))
                 repeat_limit = int(self.cfg.get("off_repeat_laps", 3))
                 for r in results:
                     if r.get("off"):
@@ -2290,6 +2378,7 @@ class Coach:
                            or (p.best_lap_s is not None
                                and lap_time > 1.15 * p.best_lap_s))
                 if not out_lap:
+                    self._last_lap_spd = spd
                     for r in results:
                         self.corner_history.setdefault(r["num"], []).append(r)
                         if len(self.corner_history[r["num"]]) > 8:
@@ -2330,7 +2419,7 @@ class Coach:
                     p.outline = rec["path_pts"]
                     self._outline_borrowed = False
                     p.save()
-                if lap_time < (p.best_lap_s or 1e9) and lap_had_off:
+                if lap_time < (p.best_lap_s or 1e9) and lap_blocked:
                     # v2.6.0 (external review): a lap with an off --
                     # including a cut corner -- must not become the
                     # reference, or every clean lap afterward reads as
@@ -2339,7 +2428,7 @@ class Coach:
                     print(f"[coach] {fmt_lap(lap_time)} was faster but "
                           f"had an off -- the clean reference stays")
                     self.log("reference_kept_off", {"lap_s": lap_time})
-                elif (getattr(p, "ref_dirty", False) and not lap_had_off
+                elif (getattr(p, "ref_dirty", False) and not lap_blocked
                         and p.best_lap_s
                         and lap_time <= p.best_lap_s * 1.03):
                     # The standing reference itself came from a lap
@@ -2357,7 +2446,7 @@ class Coach:
                     self.log("reference_cleaned", {"lap_s": lap_time})
                     self.speaker.say(
                         f"Clean reference in, {fmt_lap_spoken(lap_time)}.")
-                if lap_time < (p.best_lap_s or 1e9) and not lap_had_off:
+                if lap_time < (p.best_lap_s or 1e9) and not lap_blocked:
                     p.ref = {"spd": spd, "brk": brk, "gas": gas,
                          "hdg": rec.get("hdg"), "str": rec.get("str")}
                     p.best_lap_s = lap_time
@@ -2568,7 +2657,13 @@ class Coach:
                     cur = dict(self._off_cur)
                     cur["dur_s"] = max(0.0, t - cur["start_t"])
                     live_events.append(cur)
+                live_slip = list(self._slip_events)
+                for kind, st in self._slip_open.items():
+                    if st["last_t"] - st["start_t"] >= 0.18:
+                        live_slip.append({"kind": kind, "bins": set(st["bins"]),
+                                          "dur_s": round(st["last_t"] - st["start_t"], 2)})
                 res = analyze_lap(spd, brk, gas, self.profile.ref, [c], self.profile.bin_m,
+                                  slip_events=live_slip,
                                   off_events=live_events,
                                   off_min_s=float(self.cfg.get("off_min_duration_s", 0.35)),
                                   off_2_min_s=float(self.cfg.get("off_min_duration_2tyres_s", 0.9)),
@@ -2755,7 +2850,7 @@ def compound_suffix(raw):
 
 
 
-def _trace_svg(p):
+def _trace_svg(p, last_spd=None):
     """Reference-lap speed + pedal traces as inline SVG (v2.4.1) --
     the chart Albert asked to see in the report: speed (mph) on top,
     brake/throttle below, corner markers at each zone's brake point,
@@ -2796,6 +2891,14 @@ def _trace_svg(p):
     pts = " ".join(f"{X(b):.0f},{Y(mph[b]):.0f}" for b in range(0, n, 2))
     parts.append(f'<polyline points="{pts}" fill="none" stroke="#1a56db" '
                  f'stroke-width="1.6"/>')
+    if last_spd and len(last_spd) == n:
+        # v2.7.0: the last counted lap overlaid (dashed gray) -- the
+        # review asked to SEE the lap against the reference, not just
+        # read its deltas in the table.
+        lpts = " ".join(f"{X(b):.0f},{Y(last_spd[b] * MPH_PER_KMH):.0f}"
+                        for b in range(0, n, 2))
+        parts.append(f'<polyline points="{lpts}" fill="none" stroke="#8a8f98" '
+                     f'stroke-width="1.3" stroke-dasharray="4 3"/>')
     for i, c in enumerate(p.corners or []):
         ab = c.get("apex_bin")
         if ab is None:
@@ -2935,21 +3038,30 @@ def build_report_html(coach):
     else:
         points_html = "<p>No corner lost more than 0.05s on average — clean session.</p>"
 
+    spreads = {}
+    for c in (p.corners or []):
+        vals = [r["brake_delta_m"]
+                for r in coach.corner_history.get(c["num"], [])
+                if r.get("brake_delta_m") is not None]
+        if len(vals) >= 2:
+            spreads[c["num"]] = (max(vals) - min(vals)) * FT_PER_M
     rows = []
     for c, avg, latest in stats:
         if latest is None:
             rows.append(f"<tr><td>{esc(corner_label(c))}</td><td>—</td><td>—</td>"
-                        f"<td>—</td><td>—</td></tr>")
+                        f"<td>—</td><td>—</td><td>—</td></tr>")
         else:
             bd = latest["brake_delta_m"]
             bd_s = f"{bd * FT_PER_M:+.0f}" if bd is not None else "—"
+            sp = spreads.get(c["num"])
+            sp_s = f"{sp:.0f}" if sp is not None else "—"
             rows.append(
                 f"<tr><td><b>{esc(corner_label(c))}</b></td>"
                 f"<td style='color:{loss_color(avg)}'><b>{avg:+.2f}s</b></td>"
-                f"<td>{bd_s}</td><td>{latest['apex_delta_kmh'] * MPH_PER_KMH:+.0f}</td>"
+                f"<td>{bd_s}</td><td>{sp_s}</td><td>{latest['apex_delta_kmh'] * MPH_PER_KMH:+.0f}</td>"
                 f"<td>{latest['coast_s']:.1f}s</td></tr>")
     table_html = ("<table><tr><th>Corner</th><th>Avg loss</th><th>Brake Δ (last lap, ft)</th>"
-                  "<th>Apex Δ (mph)</th><th>Coast</th></tr>" + "\n".join(rows) + "</table>")
+                  "<th>Brake spread (ft)</th><th>Apex Δ (mph)</th><th>Coast</th></tr>" + "\n".join(rows) + "</table>")
 
     # v2.3: track-guide section -- the human coach's notes paired
     # with the corner data above, when a guide exists for this track.
@@ -2991,7 +3103,7 @@ def build_report_html(coach):
                             f" \u2014 {esc(srcmeta.get('channel', ''))}</p>")
             guide_html = "<h2>Track guide</h2>" + src_line + "\n".join(blocks) + "\n"
 
-    trace_html = _trace_svg(p)
+    trace_html = _trace_svg(p, getattr(coach, "_last_lap_spd", None))
     summary_txt = "\n".join(coach.session_summary_lines())
     best = fmt_lap(p.best_lap_s) if p and p.best_lap_s else "—"
     track = esc(p.key) if p else "unknown"
@@ -3090,6 +3202,8 @@ def run_live(cfg):
     tele = None
     current_key = None
     cur_compound = ""
+    cur_radii = [0.33, 0.33, 0.33, 0.33]
+    frame_no = 0
     hint_warned = False
     last_static_check = 0.0
     loop_errors = 0
@@ -3120,6 +3234,7 @@ def run_live(cfg):
                 if now - last_static_check > 2.0:
                     last_static_check = now
                     st = tele.static()
+                    cur_radii = [float(x) for x in st.tyreRadius]
                     base_key = sanitize(f"{st.track}__{st.carModel}")
                     suf = compound_suffix(cur_compound)
                     key = base_key + (f"__{suf}" if suf else "")
@@ -3191,12 +3306,34 @@ def run_live(cfg):
                                   f"you're on '{st.track}' -- coaching works on any track, "
                                   f"it just learns this one from your laps too.")
                 coach.observe_official(gfx.completedLaps, gfx.iLastTime, now)
+                wheel_w = [float(x) for x in phys.wheelAngularSpeed]
                 coach.feed(now, gfx.normalizedCarPosition, phys.speedKmh,
                            phys.brake, phys.gas, gfx.distanceTraveled,
                            live=(gfx.status == AC_LIVE), ict_ms=gfx.iCurrentTime,
                            heading=phys.heading,
                            tyres_out=phys.numberOfTyresOut,
-                           steer=phys.steerAngle)
+                           steer=phys.steerAngle,
+                           wheel_w=wheel_w, wheel_r=cur_radii,
+                           flag=gfx.flag, penalty_s=gfx.penaltyTime)
+                frame_no += 1
+                if cfg.get("record_frames", True) and frame_no % 3 == 0:
+                    # v2.7.0 record-and-replay: downsampled raw frames
+                    # in the session log, so detectors can be re-run
+                    # (and regression-tested) on real laps later with
+                    # --replay instead of trusting synthetic ones.
+                    coach.log("frame", {
+                        "t": round(now, 3),
+                        "pos": round(gfx.normalizedCarPosition, 5),
+                        "spd": round(phys.speedKmh, 1),
+                        "brk": round(phys.brake, 3), "gas": round(phys.gas, 3),
+                        "str": round(phys.steerAngle, 3),
+                        "dist": round(gfx.distanceTraveled, 1),
+                        "ict": gfx.iCurrentTime,
+                        "out": phys.numberOfTyresOut,
+                        "ww": [round(x, 1) for x in wheel_w],
+                        "wr": [round(x, 3) for x in cur_radii],
+                        "flag": gfx.flag, "pen": round(gfx.penaltyTime, 2),
+                        "hdg": round(phys.heading, 4)})
                 if (len(coach.lap_records) != report_state["laps"]
                         or (not report_state["opened"]
                             and coach.profile is not None
@@ -3303,6 +3440,59 @@ def sim_pedals(s, v, lap):
     return brake, gas
 
 
+def run_replay(cfg, path):
+    """Re-run a recorded session's frames through the coaching brain
+    (v2.7.0):  python ac_live_coach.py --replay logs/session_....jsonl
+
+    The frames a live session records (10 Hz, see record_frames) are
+    fed back through feed() against a throwaway profile in a temp
+    folder -- Albert's real profiles are never touched -- and every
+    spoken line and lap is printed. New detectors get validated on
+    REAL laps here before they ever coach live."""
+    global TRACKS_DIR
+    import tempfile
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                rows.append(json.loads(line))
+            except Exception:
+                pass
+    frames = [r for r in rows if r.get("event") == "frame"]
+    if not frames:
+        print(f"[replay] no frame rows in {path} -- the session was "
+              f"recorded before v2.7.0 (or record_frames was off)")
+        return None
+    key = next((r["key"] for r in rows if r.get("event") == "session"),
+               "replay__car")
+    TRACKS_DIR = tempfile.mkdtemp(prefix="coach_replay_")
+
+    class ReplaySpeaker:
+        def __init__(self):
+            self.lines = []
+
+        def say(self, text, **kw):
+            self.lines.append(text)
+            print(f"  [say] {text}")
+
+    speaker = ReplaySpeaker()
+    coach = Coach(cfg, speaker, lambda *a, **k: None)
+    prof = TrackProfile(key + "__replay")
+    coach.set_profile(prof)
+    for fr in frames:
+        coach.feed(fr["t"], fr["pos"], fr["spd"], fr["brk"], fr["gas"],
+                   fr["dist"], live=True, ict_ms=fr.get("ict"),
+                   heading=fr.get("hdg"), tyres_out=fr.get("out"),
+                   steer=fr.get("str"), wheel_w=fr.get("ww"),
+                   wheel_r=fr.get("wr"), flag=fr.get("flag"),
+                   penalty_s=fr.get("pen"))
+    if frames:
+        coach._pump_finishes(frames[-1]["t"] + 10.0)
+    print(f"[replay] {len(frames)} frames, {len(coach.lap_records)} laps, "
+          f"best {fmt_lap(prof.best_lap_s) if prof.best_lap_s else '--'}")
+    return coach
+
+
 def run_simulate(cfg):
     print("=== SIMULATE MODE (no game; synthetic Buttonwillow-like track) ===")
     log, txt_path, jsonl_path, tf, jf = make_logger()
@@ -3358,7 +3548,13 @@ def main():
     if "--list-voices" in sys.argv:
         list_voices()
         return
-    if "--simulate" in sys.argv:
+    if "--replay" in sys.argv:
+        i = sys.argv.index("--replay")
+        if i + 1 < len(sys.argv):
+            run_replay(cfg, sys.argv[i + 1])
+        else:
+            print("usage: ac_live_coach.py --replay <session.jsonl>")
+    elif "--simulate" in sys.argv:
         run_simulate(cfg)
     else:
         run_live(cfg)

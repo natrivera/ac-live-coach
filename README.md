@@ -143,6 +143,14 @@ say.
 
 ## Changelog
 
+### v2.7.0
+- **Lockup and wheelspin cues (external review):** the physics page's wheel speeds were already arriving unused. Each wheel's tangential speed (angular speed x tyre radius) is now compared with the car's speed live: a front wheel turning much slower under braking is a lockup, a rear turning much faster under power is wheelspin. Sustained events (0.18 s+, flicker-tolerant) are attributed to corners and spoken as causes -- "you're locking the fronts there" / "wheelspin there" -- competing in the cost ranking by their duration.
+- **Record and replay:** live sessions now record downsampled raw frames (10 Hz: pedals, speed, wheel speeds, flags) into the session log. `python ac_live_coach.py --replay logs/session_....jsonl` re-runs them through the coaching brain against a throwaway profile and prints every cue -- new detectors can be validated on real laps before they coach live. Set `record_frames` false to opt out.
+- **Penalty guard:** a lap carrying an AC penalty now blocks/updates the reference exactly like a lap with an off (the validity half of the reference-integrity rule).
+- **Report:** the trace chart overlays your last counted lap (dashed gray) on the reference, and the corner table gains a brake-spread column -- how much your brake point wandered at each corner across recent laps, in feet.
+- **Profile files carry a schema stamp** from this version on.
+- Tests grow to 27 checks, including the slip detector, the penalty guard and a record/replay round-trip.
+
 ### v2.6.1
 - An empty tyre-compound read no longer drops the profile to the no-compound key: AC clears the field when a session ends, which stamped a spurious fresh profile in the first v2.6.0 log. A change to a different non-empty compound still switches profiles.
 

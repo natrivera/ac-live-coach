@@ -147,6 +147,100 @@ recovered = m.TrackProfile("test5__car")
 check("corrupt profile recovers from backup",
       recovered.load() and recovered.best_lap_s == 100.0)
 
+# ---- slip detection (v2.7.0) ----
+coach6, prof6 = new_coach("test6__car")
+R = 0.33
+V = 100.0 / 3.6
+def ww_for(fl, fr, rl, rr):
+    return [fl * V / R, fr * V / R, rl * V / R, rr * V / R]
+t = 0.0
+for i in range(15):  # 0.5 s of front lockup under braking
+    t += 1 / 30
+    coach6._slip_update(t, 0.500 + i * 0.0004, 100.0, 0.8, 0.0,
+                        ww_for(0.6, 0.62, 1.0, 1.0), [R] * 4)
+for i in range(10):  # release; event closes after the grace gap
+    t += 1 / 30
+    coach6._slip_update(t, 0.510 + i * 0.0004, 100.0, 0.0, 0.2,
+                        ww_for(1.0, 1.0, 1.0, 1.0), [R] * 4)
+check("lockup event recorded", len(coach6._slip_events) == 1
+      and coach6._slip_events[0]["kind"] == "lockup"
+      and coach6._slip_events[0]["dur_s"] >= 0.3)
+coach6._slip_events.clear()
+for i in range(15):  # 0.5 s of rear wheelspin under power
+    t += 1 / 30
+    coach6._slip_update(t, 0.520 + i * 0.0004, 100.0, 0.0, 0.9,
+                        ww_for(1.0, 1.0, 1.45, 1.4), [R] * 4)
+coach6._close_slip_events()
+check("wheelspin event recorded", len(coach6._slip_events) == 1
+      and coach6._slip_events[0]["kind"] == "spin")
+coach6._slip_events.clear()
+for i in range(20):  # matched wheels: nothing
+    t += 1 / 30
+    coach6._slip_update(t, 0.530 + i * 0.0004, 100.0, 0.5, 0.5,
+                        ww_for(1.0, 1.0, 1.0, 1.0), [R] * 4)
+coach6._close_slip_events()
+check("matched wheels record nothing", coach6._slip_events == [])
+
+# ---- slip reaches the corner analysis and the cue (v2.7.0) ----
+coach7, prof7 = new_coach("test7__car")
+coach7._finalize_lap(make_rec(), 100.0, "test")
+c0 = prof7.corners[0]
+res = m.analyze_lap(*[make_rec()[k] for k in ("spd", "brk", "gas")],
+                    prof7.ref, prof7.corners, prof7.bin_m,
+                    slip_events=[{"kind": "lockup", "bins": {c0["apex_bin"]},
+                                  "dur_s": 0.5}])
+check("lockup lands on the corner", res[0]["lockup_s"] == 0.5)
+s_lock = dict(BASE, lockup_s=0.5, coast_s=0.2)
+cue = m.corner_cue(dict(s_lock, num=1, loss=0.5, off=False))
+check("lockup becomes the spoken fix", cue is not None and "locking" in cue)
+
+# ---- penalty blocks the reference like an off (v2.7.0) ----
+coach8, prof8 = new_coach("test8__car")
+rec_p = make_rec(); rec_p["penalty"] = True
+coach8._finalize_lap(rec_p, 100.0, "test")
+check("first lap with a penalty marks the reference dirty",
+      prof8.ref_dirty is True)
+coach8._finalize_lap(make_rec(), 101.0, "test")  # clean, within 3%: cleans it
+check("clean lap cleans a penalty-dirty reference",
+      prof8.best_lap_s == 101.0 and prof8.ref_dirty is False)
+rec_p2 = make_rec(); rec_p2["penalty"] = True
+coach8._finalize_lap(rec_p2, 99.0, "test")
+check("faster lap with a penalty cannot take the reference",
+      prof8.best_lap_s == 101.0)
+
+# ---- report: overlay + brake spread (v2.7.0) ----
+html = m.build_report_html(coach)
+check("report has the brake-spread column", "Brake spread" in html)
+check("report overlays the last lap trace", "#8a8f98" in html)
+
+# ---- record + replay round-trip (v2.7.0) ----
+import math as _math
+frames = []
+tt = 0.0
+for lap in range(3):
+    steps = 3000 if lap < 2 else 300  # partial 3rd lap: crosses lap 2's finish
+    for i in range(steps):
+        tt += 1 / 30
+        pos = i / steps
+        spd = 200.0 - 120.0 * _math.exp(-((pos - 0.5075) ** 2) / 0.0002)
+        vv = max(spd, 30.0) / 3.6
+        frames.append({"event": "frame", "t": round(tt, 3), "pos": round(pos, 5),
+                       "spd": round(spd, 1), "brk": 0.9 if 0.47 < pos < 0.50 else 0.0,
+                       "gas": 0.0 if pos < 0.53 else 1.0, "str": 0.0,
+                       "dist": round(lap * 2511.0 + pos * 2511.0, 1),
+                       "ict": int((i / 30) * 1000), "out": 0,
+                       "ww": [round(vv / R, 1)] * 4, "wr": [R] * 4,
+                       "flag": 0, "pen": 0.0, "hdg": None})
+sess_path = os.path.join(TMP, "replay_session.jsonl")
+with open(sess_path, "w", encoding="utf-8") as f:
+    f.write(json.dumps({"event": "session", "key": "test9__car"}) + "\n")
+    for fr in frames:
+        f.write(json.dumps(fr) + "\n")
+rcoach = m.run_replay(CFG, sess_path)
+check("replay rebuilds a reference from recorded frames",
+      rcoach is not None and rcoach.profile.best_lap_s is not None
+      and len(rcoach.lap_records) >= 1)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
