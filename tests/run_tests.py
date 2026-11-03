@@ -316,6 +316,44 @@ _sp.say_clauses("Sunset: lost 3 tenths there", "brake later", 220)
 check("say_clauses logs the combined line",
       ("cue", {"text": "Sunset: lost 3 tenths there -- brake later"}) in _logs)
 
+# ---- comms fx (v2.10.0) ----
+import math as _math
+def _mix_wav():
+    rate = 22050
+    buf = _io.BytesIO()
+    with _wave.open(buf, "wb") as wf:
+        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(rate)
+        wf.writeframes(b"".join(
+            int(0.35 * 32767 * (_math.sin(2 * _math.pi * 150 * i / rate)
+                                + _math.sin(2 * _math.pi * 1000 * i / rate))
+                ).to_bytes(2, "little", signed=True)
+            for i in range(int(rate * 0.30))))
+    return buf.getvalue()
+def _band_energy(wav_bytes, freq):
+    with _wave.open(_io.BytesIO(wav_bytes), "rb") as wf:
+        rate = wf.getframerate()
+        raw = wf.readframes(wf.getnframes())
+    vals = [int.from_bytes(raw[i:i + 2], "little", signed=True) / 32768.0
+            for i in range(0, len(raw), 2)]
+    vals = vals[len(vals) // 2:]  # skip the click prefix and transients
+    re_ = sum(v * _math.cos(2 * _math.pi * freq * i / rate)
+              for i, v in enumerate(vals))
+    im_ = sum(v * _math.sin(2 * _math.pi * freq * i / rate)
+              for i, v in enumerate(vals))
+    return (re_ * re_ + im_ * im_) ** 0.5
+_fx = m._comms_fx(_mix_wav(), click=True)
+check("comms fx band-limits (150 Hz collapses vs 1 kHz)",
+      _band_energy(_fx, 150) < 0.30 * _band_energy(_fx, 1000))
+with _wave.open(_io.BytesIO(_fx), "rb") as wf:
+    _dur = wf.getnframes() / wf.getframerate()
+check("comms fx adds the key-up prefix", 0.34 < _dur < 0.37)
+_fx_nc = m._comms_fx(_mix_wav(), click=False)
+with _wave.open(_io.BytesIO(_fx_nc), "rb") as wf:
+    _dur_nc = wf.getnframes() / wf.getframerate()
+check("no prefix without the click", abs(_dur_nc - 0.30) < 0.01)
+check("comms fx defaults on",
+      CFG["voice_comms_fx"] is True and CFG["voice_comms_click"] is True)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

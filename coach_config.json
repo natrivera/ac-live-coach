@@ -26,5 +26,7 @@
   "guide_spoken_tips": false,
   "guide_symptom_tips": true,
   "record_frames": true,
-  "exit_clause_gap_ms": 220
+  "exit_clause_gap_ms": 220,
+  "voice_comms_fx": true,
+  "voice_comms_click": true
 }

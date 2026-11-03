@@ -143,6 +143,10 @@ say.
 
 ## Changelog
 
+### v2.10.0
+- **Pit-radio voice (comms fx):** Piper cues now pass through a comms treatment before playback — band-limited to the radio channel (~350 Hz high-pass, two passes; ~3.4 kHz low-pass, two passes), a touch of saturation for grit, level normalized — preceded by a short key-up blip (30 ms tone + 25 ms) like an engineer keying the mic. On by default (`voice_comms_fx`), with the click separately switchable (`voice_comms_click`). Piper path only: SAPI speaks directly and can't be processed. Pure stdlib DSP; any unexpected audio format passes through untouched.
+- Tests grow to 43 checks, including band-limit and click-prefix measurements on the effect itself.
+
 ### v2.9.0
 - **Exit feedback breathes:** the exit line is now spoken as two clauses with a real slice of silence spliced between the measurement and the instruction ("Sunset: lost 3 tenths there" — 220 ms — "brake later"), instead of one welded sentence. The pause is exact on the Piper engine (rendered into the audio) and natural on the SAPI fallback (separate utterances). Tunable via `exit_clause_gap_ms`; the session log keeps the familiar single-line form.
 - **New default voice: en_US-lessac-high** — the same voice as before, one quality tier up (114 MB one-time download, SHA-256 pinned like the medium model). Any other Piper voice still works via `piper_voice`.

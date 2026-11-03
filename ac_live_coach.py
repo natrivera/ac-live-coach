@@ -201,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.9.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.10.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -210,6 +210,8 @@ DEFAULT_CONFIG = {
     "piper_voice": "en_US-lessac-high",  # any piper-voices name; downloaded once into voices/
     "piper_length_scale": 1.0,    # piper speech rate: <1 faster, >1 slower
     "exit_clause_gap_ms": 220,    # v2.9.0: silence spliced between an exit line's measurement and its fix
+    "voice_comms_fx": True,       # v2.10.0: pit-radio band-limit + saturation on the piper voice
+    "voice_comms_click": True,    # v2.10.0: short key-up blip before each cue (part of comms fx)
     "piper_dir": "",              # voice model folder; empty = <app dir>/voices
     "voice_rate": 178,            # words per minute (SAPI engine)
     "voice": "",                  # SAPI voice name fragment ("zira", "david"); empty = system default
@@ -443,6 +445,80 @@ def _splice_wavs(a_bytes, b_bytes, gap_s):
         return None
 
 
+def _comms_fx(wav_bytes, click=True):
+    """Make a rendered cue sound like a pit-radio transmission
+    (v2.10.0): band-limit to the comms channel (~300 Hz-3.4 kHz),
+    a touch of saturation for grit, level normalized, and a short
+    key-up blip in front -- the sound of an engineer keying the
+    mic. Pure stdlib, mono 16-bit only; any format surprise returns
+    the audio untouched, because the effect must never eat a cue."""
+    import io
+    import math
+    import sys
+    import wave
+    from array import array
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as wf:
+            params = wf.getparams()
+            raw = wf.readframes(wf.getnframes())
+        if params.nchannels != 1 or params.sampwidth != 2:
+            return wav_bytes
+        rate = params.framerate
+        samples = array("h")
+        samples.frombytes(raw)
+        if sys.byteorder == "big":
+            samples.byteswap()
+        x = [v / 32768.0 for v in samples]
+        dt = 1.0 / rate
+        # high-pass ~350 Hz (one-pole, two passes -- radios roll
+        # off the lows hard; one pass leaves too much rumble)
+        rc = 1.0 / (2.0 * math.pi * 350.0)
+        a_hp = rc / (rc + dt)
+        y = list(x)
+        for _ in range(2):
+            prev_x = 0.0
+            prev_y = 0.0
+            for i, v in enumerate(y):
+                prev_y = a_hp * (prev_y + v - prev_x)
+                y[i] = prev_y
+                prev_x = v
+        # low-pass ~3.4 kHz, two passes for a steeper shoulder
+        rc = 1.0 / (2.0 * math.pi * 3400.0)
+        a_lp = dt / (rc + dt)
+        for _ in range(2):
+            acc = 0.0
+            for i, v in enumerate(y):
+                acc += a_lp * (v - acc)
+                y[i] = acc
+        # saturation (the grit), then normalize the level
+        y = [math.tanh(1.8 * v) for v in y]
+        peak = max((abs(v) for v in y), default=0.0)
+        if peak > 1e-4:
+            g = 0.89 / peak
+            y = [v * g for v in y]
+        prefix = []
+        if click:
+            n_tone = int(rate * 0.030)
+            n_gap = int(rate * 0.025)
+            fade = max(1.0, rate * 0.005)
+            for i in range(n_tone):
+                env = min(1.0, i / fade, (n_tone - i) / fade)
+                prefix.append(0.30 * env
+                              * math.sin(2.0 * math.pi * 1200.0 * i / rate))
+            prefix.extend([0.0] * n_gap)
+        out = array("h", (max(-32767, min(32767, int(round(v * 32767))))
+                          for v in (prefix + y)))
+        if sys.byteorder == "big":
+            out.byteswap()
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setparams(params)
+            wf.writeframes(out.tobytes())
+        return buf.getvalue()
+    except Exception:
+        return wav_bytes
+
+
 class Speaker:
     def __init__(self, cfg, log_fn):
         self.cfg = cfg
@@ -589,7 +665,7 @@ class Speaker:
         if not self._piper_ensure():
             return False
         try:
-            data = self._piper_render(text)
+            data = self._maybe_comms(self._piper_render(text))
             import winsound
             # SND_MEMORY plays the WAV bytes directly. Synchronous (no
             # SND_ASYNC) so cues stay in order on the speech thread.
@@ -604,6 +680,14 @@ class Speaker:
                 pass
             return False
 
+    def _maybe_comms(self, data):
+        """The pit-radio treatment (v2.10.0), when enabled. Piper
+        path only -- SAPI speaks directly and cannot be processed."""
+        if self.cfg.get("voice_comms_fx", True):
+            return _comms_fx(
+                data, click=bool(self.cfg.get("voice_comms_click", True)))
+        return data
+
     def _speak_piper_clauses(self, a, b, gap_ms):
         if not self._piper_ensure():
             return False
@@ -613,6 +697,7 @@ class Speaker:
                                 max(0, int(gap_ms)) / 1000.0)
             if data is None:
                 return False
+            data = self._maybe_comms(data)
             import winsound
             winsound.PlaySound(data, winsound.SND_MEMORY)
             self._piper_fails = 0
