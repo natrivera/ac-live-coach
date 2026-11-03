@@ -201,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.10.2"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.11.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -1827,6 +1827,9 @@ class Coach:
         self._live_losses = {}     # v2.1.0: this lap's live per-zone results (section feedback)
         self.lap_records = []      # per-lap summaries for the debrief
         self._last_lap_spd = None  # v2.7.0: last counted lap's trace (report)
+        self._session_best = None  # v2.11.0: {time, spd, brk} of the session's best lap
+        self._optimal = None       # v2.11.0: stitched best-zone lap {spd, brk, zone_times}
+        self._optimal_ref_time = None
         self.approach_fired = set()
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
@@ -2613,6 +2616,7 @@ class Coach:
                                and lap_time > 1.15 * p.best_lap_s))
                 if not out_lap:
                     self._last_lap_spd = spd
+                    self._note_counted_lap_traces(lap_time, spd, brk, results)
                     for r in results:
                         self.corner_history.setdefault(r["num"], []).append(r)
                         if len(self.corner_history[r["num"]]) > 8:
@@ -2986,6 +2990,64 @@ class Coach:
                         self._exit_spoken += 1
                 break
 
+    def _seed_optimal(self):
+        """(Re)build the stitched optimal lap from the current
+        reference (v2.11.0): the reference's own traces, with each
+        zone's time as the mark to beat. Counted laps then swap in
+        any zone they did better. Re-seeded whenever the reference
+        changes (the seed mark is the reference's lap time)."""
+        p = self.profile
+        self._optimal = None
+        self._optimal_ref_time = None
+        if (p is None or not p.ref or not p.ref.get("spd")
+                or not p.corners):
+            return
+        if any(c.get("zone_start") is None or c.get("zone_end") is None
+               for c in p.corners):
+            return
+        spd = list(p.ref["spd"])
+        brk = list(p.ref.get("brk") or [0.0] * len(spd))
+        zt = {}
+        for c in p.corners:
+            zt[c["num"]] = zone_time(p.ref["spd"], c["zone_start"],
+                                     c["zone_end"], p.bin_m)
+        self._optimal = {"spd": spd, "brk": brk, "zone_times": zt}
+        self._optimal_ref_time = p.best_lap_s
+
+    def _note_counted_lap_traces(self, lap_time, spd, brk, results):
+        """Retain the traces the report's three-lap chart needs
+        (v2.11.0): the session's best lap outright, and the optimal
+        lap's zone segments whenever a clean zone beats the mark.
+        Off zones never enter the optimal -- a cut is not a line."""
+        if (self._session_best is None
+                or lap_time < self._session_best["time"]):
+            self._session_best = {"time": lap_time, "spd": list(spd),
+                                  "brk": list(brk)}
+        p = self.profile
+        if p is None or not p.corners:
+            return
+        if (self._optimal is None
+                or self._optimal_ref_time != p.best_lap_s):
+            self._seed_optimal()
+        if self._optimal is None:
+            return
+        cmap = {c["num"]: c for c in p.corners}
+        for r in results:
+            if r.get("off") or r.get("zone_time") is None:
+                continue
+            c = cmap.get(r["num"])
+            if c is None:
+                continue
+            if r["zone_time"] < self._optimal["zone_times"].get(
+                    r["num"], 1e9) - 1e-9:
+                z0 = c["zone_start"]
+                span = (c["zone_end"] - c["zone_start"]) % NBINS
+                for k in range(span + 1):
+                    b = (z0 + k) % NBINS
+                    self._optimal["spd"][b] = spd[b]
+                    self._optimal["brk"][b] = brk[b]
+                self._optimal["zone_times"][r["num"]] = r["zone_time"]
+
     def _speak_lap_summary(self, lap_time, results):
         p = self.profile
         parts = [f"Lap {fmt_lap_spoken(lap_time)}."]
@@ -3130,11 +3192,13 @@ def compound_suffix(raw):
 
 
 
-def _trace_svg(p, last_spd=None):
-    """Reference-lap speed + pedal traces as inline SVG (v2.4.1) --
-    the chart Albert asked to see in the report: speed (mph) on top,
-    brake/throttle below, corner markers at each zone's brake point,
-    apex and throttle point. Returns "" without a reference lap."""
+def _trace_svg(p, session_best=None, optimal=None):
+    """Speed & brake for three laps (v2.11.0) -- the chart Albert
+    asked the report for: the best lap ever (the stored reference),
+    the optimal lap stitched from the best zone segments, and the
+    best lap of this session. Speed (mph) up top, brake below;
+    corner markers come from the reference lap. Returns "" without
+    a reference lap."""
     if p is None or not p.ref or not p.ref.get("spd"):
         return ""
     spd_kmh = p.ref["spd"]
@@ -3143,9 +3207,28 @@ def _trace_svg(p, last_spd=None):
     n = len(spd_kmh)
     bin_ft = (p.bin_m or 2.2) * FT_PER_M
     total_ft = n * bin_ft
+
+    laps = [("ever", spd_kmh, brk, p.best_lap_s)]
+    if optimal and len(optimal.get("spd") or []) == n:
+        gain = 0.0
+        zt = optimal.get("zone_times") or {}
+        for c in (p.corners or []):
+            if c.get("num") in zt:
+                gain += max(0.0, zone_time(spd_kmh, c["zone_start"],
+                                           c["zone_end"], p.bin_m)
+                            - zt[c["num"]])
+        theo = (p.best_lap_s - gain) if (p.best_lap_s and gain > 0.05) else None
+        laps.append(("optimal", optimal["spd"], optimal.get("brk"), theo))
+    if session_best and len(session_best.get("spd") or []) == n:
+        laps.append(("session", session_best["spd"],
+                     session_best.get("brk"), session_best.get("time")))
+
+    all_mph = []
+    for _k, s_, _b, _t in laps:
+        all_mph.extend(v * MPH_PER_KMH for v in s_[::8])
     mph = [v * MPH_PER_KMH for v in spd_kmh]
-    lo = max(0.0, min(mph) - 4)
-    hi = max(mph) + 4
+    lo = max(0.0, min(all_mph) - 4)
+    hi = max(all_mph) + 4
     W, L, R = 960, 46, 10
     ST, SB = 34, 214          # speed panel top/bottom
     PT, PB = 244, 312          # pedal panel top/bottom
@@ -3156,6 +3239,9 @@ def _trace_svg(p, last_spd=None):
     def Y(v):
         return SB - (SB - ST) * ((v - lo) / max(1.0, hi - lo))
 
+    style = {"ever": ("#1a56db", "1.6", ""),
+             "session": ("#e07b24", "1.4", ""),
+             "optimal": ("#7b3fd4", "1.4", ' stroke-dasharray="5 3"')}
     parts = [f'<svg viewBox="0 0 {W} 344" width="100%" '
              f'xmlns="http://www.w3.org/2000/svg" role="img">']
     for frac in (0.0, 0.5, 1.0):
@@ -3168,17 +3254,12 @@ def _trace_svg(p, last_spd=None):
     parts.append(f'<text x="4" y="{(ST + SB) / 2:.0f}" font-size="11" fill="#555" '
                  f'transform="rotate(-90 12 {(ST + SB) / 2:.0f})" '
                  f'text-anchor="middle">mph</text>')
-    pts = " ".join(f"{X(b):.0f},{Y(mph[b]):.0f}" for b in range(0, n, 2))
-    parts.append(f'<polyline points="{pts}" fill="none" stroke="#1a56db" '
-                 f'stroke-width="1.6"/>')
-    if last_spd and len(last_spd) == n:
-        # v2.7.0: the last counted lap overlaid (dashed gray) -- the
-        # review asked to SEE the lap against the reference, not just
-        # read its deltas in the table.
-        lpts = " ".join(f"{X(b):.0f},{Y(last_spd[b] * MPH_PER_KMH):.0f}"
-                        for b in range(0, n, 2))
-        parts.append(f'<polyline points="{lpts}" fill="none" stroke="#8a8f98" '
-                     f'stroke-width="1.3" stroke-dasharray="4 3"/>')
+    for kind, s_, _b, _t in sorted(laps, key=lambda kv: kv[0] == "ever"):
+        color, width, dash = style[kind]
+        pts = " ".join(f"{X(b):.0f},{Y(s_[b] * MPH_PER_KMH):.0f}"
+                       for b in range(0, n, 2))
+        parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
+                     f'stroke-width="{width}"{dash}/>')
     for i, c in enumerate(p.corners or []):
         ab = c.get("apex_bin")
         if ab is None:
@@ -3199,11 +3280,20 @@ def _trace_svg(p, last_spd=None):
         ly = 14 if i % 2 == 0 else 27
         parts.append(f'<text x="{ax:.0f}" y="{ly}" font-size="10.5" fill="#333" '
                      f'text-anchor="middle">{int(c.get("num") or 0)} {html.escape(str(name))}</text>')
-    for series, color in ((brk, "#d64545"), (gas, "#2e9e5b")):
-        pts = " ".join(f"{X(b):.0f},{PB - (PB - PT) * max(0.0, min(1.0, series[b])):.0f}"
-                       for b in range(0, n, 4))
-        parts.append(f'<polyline points="{L},{PB} {pts} {X(n - 1):.0f},{PB}" '
-                     f'fill="{color}" opacity="0.4" stroke="none"/>')
+    # pedal panel: the reference throttle as context fill, then a
+    # brake line per lap in its speed color.
+    pts = " ".join(f"{X(b):.0f},{PB - (PB - PT) * max(0.0, min(1.0, gas[b])):.0f}"
+                   for b in range(0, n, 4))
+    parts.append(f'<polyline points="{L},{PB} {pts} {X(n - 1):.0f},{PB}" '
+                 f'fill="#2e9e5b" opacity="0.35" stroke="none"/>')
+    for kind, _s, b_, _t in laps:
+        if not b_ or len(b_) != n:
+            continue
+        color, _w, dash = style[kind]
+        pts = " ".join(f"{X(b):.0f},{PB - (PB - PT) * max(0.0, min(1.0, b_[b])):.0f}"
+                       for b in range(0, n, 2))
+        parts.append(f'<polyline points="{pts}" fill="none" stroke="{color}" '
+                     f'stroke-width="1.2"{dash}/>')
     parts.append(f'<line x1="{L}" y1="{PB}" x2="{W - R}" y2="{PB}" stroke="#c9ccd1"/>')
     parts.append(f'<text x="{L - 5}" y="{(PT + PB) / 2 + 4:.0f}" font-size="11" '
                  f'fill="#555" text-anchor="end">pedals</text>')
@@ -3215,11 +3305,21 @@ def _trace_svg(p, last_spd=None):
         tick += 2000
     parts.append(f'<text x="{(L + W - R) / 2:.0f}" y="344" font-size="0" fill="#555"></text>')
     parts.append("</svg>")
-    parts.append('<p class="legend"><span style="color:#d64545">&#9660; brake point</span>'
-                 '<span style="color:#111">&#9679; apex</span>'
-                 '<span style="color:#2e9e5b">&#9650; back to full throttle</span>'
-                 '<span>Distance in feet</span></p>')
-    return "<h2>Reference lap — speed &amp; pedals</h2>\n" + "\n".join(parts) + "\n"
+    labels = {"ever": "Best ever", "optimal": "Optimal (best zones)",
+              "session": "Best this session"}
+    leg = ['<p class="legend">']
+    for kind, _s, _b, t_ in laps:
+        color = style[kind][0]
+        when = f" {fmt_lap(t_)}" if t_ else ""
+        leg.append(f'<span style="color:{color}">&#9644; {labels[kind]}{when}</span>')
+    leg.append('<span style="color:#d64545">&#9660; brake point</span>'
+               '<span style="color:#111">&#9679; apex</span>'
+               '<span style="color:#2e9e5b">&#9650; back to full throttle</span>'
+               '<span>Pedals: lines brake, fill throttle (best ever)</span>'
+               '<span>Distance in feet</span></p>')
+    parts.append("".join(leg))
+    return ("<h2>Speed &amp; brake — best ever · optimal · this session</h2>\n"
+            + "\n".join(parts) + "\n")
 
 
 def build_report_html(coach):
@@ -3383,7 +3483,8 @@ def build_report_html(coach):
                             f" \u2014 {esc(srcmeta.get('channel', ''))}</p>")
             guide_html = "<h2>Track guide</h2>" + src_line + "\n".join(blocks) + "\n"
 
-    trace_html = _trace_svg(p, getattr(coach, "_last_lap_spd", None))
+    trace_html = _trace_svg(p, getattr(coach, "_session_best", None),
+                            getattr(coach, "_optimal", None))
     summary_txt = "\n".join(coach.session_summary_lines())
     best = fmt_lap(p.best_lap_s) if p and p.best_lap_s else "—"
     track = esc(p.key) if p else "unknown"

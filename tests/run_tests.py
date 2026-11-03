@@ -208,10 +208,10 @@ coach8._finalize_lap(rec_p2, 99.0, "test")
 check("faster lap with a penalty cannot take the reference",
       prof8.best_lap_s == 101.0)
 
-# ---- report: overlay + brake spread (v2.7.0) ----
+# ---- report: three-lap chart + brake spread (v2.7.0, v2.11.0) ----
 html = m.build_report_html(coach)
 check("report has the brake-spread column", "Brake spread" in html)
-check("report overlays the last lap trace", "#8a8f98" in html)
+check("report chart shows the session-best trace", "#e07b24" in html)
 
 # ---- record + replay round-trip (v2.7.0) ----
 import math as _math
@@ -353,6 +353,45 @@ with _wave.open(_io.BytesIO(_fx_nc), "rb") as wf:
 check("no prefix without the click", abs(_dur_nc - 0.30) < 0.01)
 check("comms fx defaults on",
       CFG["voice_comms_fx"] is True and CFG["voice_comms_click"] is True)
+
+# ---- three-lap report traces (v2.11.0) ----
+coachB, profB = new_coach("testB__car")
+profB.track_length_m = 4406.0
+profB.best_lap_s = 100.0
+profB.ref = {"spd": [80.0] * m.NBINS, "brk": [0.0] * m.NBINS,
+             "gas": [0.0] * m.NBINS, "str": [0.0] * m.NBINS}
+profB.corners = [
+    {"num": 1, "name": "Turn 1", "zone_start": 100, "zone_end": 199,
+     "brake_bin": 120, "apex_bin": 150, "throttle_bin": 180,
+     "has_brake_zone": True},
+    {"num": 2, "name": "Turn 2", "zone_start": 500, "zone_end": 599,
+     "brake_bin": 520, "apex_bin": 550, "throttle_bin": 580,
+     "has_brake_zone": True},
+]
+coachB.set_profile(profB)
+spdA = [80.0] * m.NBINS; spdB = [80.0] * m.NBINS
+for b in range(100, 200): spdA[b] = 90.0
+for b in range(500, 600): spdB[b] = 95.0
+coachB._note_counted_lap_traces(101.0, spdA, [0.0] * m.NBINS, [
+    {"num": 1, "zone_time": 9.0, "off": False},
+    {"num": 2, "zone_time": 11.0, "off": False}])
+coachB._note_counted_lap_traces(100.5, spdB, [0.0] * m.NBINS, [
+    {"num": 1, "zone_time": 10.5, "off": False},
+    {"num": 2, "zone_time": 9.2, "off": False}])
+check("optimal takes zone 1 from lap A", coachB._optimal["spd"][150] == 90.0)
+check("optimal takes zone 2 from lap B", coachB._optimal["spd"][550] == 95.0)
+check("optimal keeps the reference elsewhere",
+      coachB._optimal["spd"][300] == 80.0)
+check("session best retained", coachB._session_best["time"] == 100.5)
+coachB._note_counted_lap_traces(102.0, [120.0] * m.NBINS, [0.0] * m.NBINS, [
+    {"num": 1, "zone_time": 8.0, "off": True},
+    {"num": 2, "zone_time": 8.0, "off": True}])
+check("off zones never enter the optimal",
+      coachB._optimal["zone_times"][1] == 9.0)
+_html = m._trace_svg(profB, coachB._session_best, coachB._optimal)
+check("chart draws all three laps",
+      all(k in _html for k in ("Best ever", "Optimal", "Best this session")))
+check("chart falls back to the reference alone", m._trace_svg(profB) != "")
 
 print()
 if FAILS:

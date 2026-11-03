@@ -143,6 +143,10 @@ say.
 
 ## Changelog
 
+### v2.11.0
+- **Report chart, three laps:** the speed/pedal chart now draws the three laps that matter — the **best lap ever** (the stored reference, blue), the **optimal lap** (purple, dashed: the reference with each zone swapped for the best clean execution of it from this session, its stitched time in the legend), and the **best lap of this session** (orange). Speed on top for all three; below, a brake line per lap in its own color over the reference throttle fill. Corner markers still come from the reference lap. The old last-lap overlay is retired — the session best is the more useful trace. Off zones never enter the optimal: a cut is not a line.
+- Tests grow to 50 checks, including zone stitching from complementary laps.
+
 ### v2.10.2
 - **Comms fx:** hiss bed trimmed about a third (driver's ear: slightly less), everything else unchanged.
 
