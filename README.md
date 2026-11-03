@@ -143,6 +143,15 @@ say.
 
 ## Changelog
 
+### v2.8.0
+- **Audit first:** `docs/AUDIT-2026-11-03.md` maps the comprehensive development review against the code — what exists, what's missing, what's a deliberate non-goal — and the prioritized plan that follows from it. This release implements its first slice.
+- **Version, single source of truth:** the session/report stamp came from a hardcoded constant that releases had stopped bumping (it read 2.5.3 through three releases) while the config carried a second, unread version key. The code constant is now the only version; the config key is removed.
+- **Recording at full rate:** session frames are recorded at the acquisition rate (~30 Hz), not 10 Hz — the shortest analyzed events (0.18 s lockups) were two samples wide at 10 Hz, too thin to replay faithfully.
+- **Speech scheduler:** deferrable speech (approach cues, guide tips) now waits for a straight — it holds while the car is inside any corner zone and drops silently inside 100 m of the brake point, instead of landing mid-corner in linked sequences.
+- **Cue memory:** the same approach instruction at the same corner is suppressed for 3 laps unless the loss worsened by 0.15 s or more — repeating an instruction teaches nothing.
+- **Braking depth:** each zone now also measures peak brake pressure and brake-release duration against the reference. Two new spoken symptoms, each gated on a corroborating signal: "you're not using all the brake there" (peak far below reference, no speed gained for it) and "let the brake off more smoothly there" (release far quicker than reference with a slower apex).
+- Tests grow to 34 checks, including the scheduler gate, cue memory and the new brake symptoms.
+
 ### v2.7.0
 - **Lockup and wheelspin cues (external review):** the physics page's wheel speeds were already arriving unused. Each wheel's tangential speed (angular speed x tyre radius) is now compared with the car's speed live: a front wheel turning much slower under braking is a lockup, a rear turning much faster under power is wheelspin. Sustained events (0.18 s+, flicker-tolerant) are attributed to corners and spoken as causes -- "you're locking the fronts there" / "wheelspin there" -- competing in the cost ranking by their duration.
 - **Record and replay:** live sessions now record downsampled raw frames (10 Hz: pedals, speed, wheel speeds, flags) into the session log. `python ac_live_coach.py --replay logs/session_....jsonl` re-runs them through the coaching brain against a throwaway profile and prints every cue -- new detectors can be validated on real laps before they coach live. Set `record_frames` false to opt out.

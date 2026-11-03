@@ -201,7 +201,8 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.5.3"
+VERSION = "2.8.0"  # THE version stamp -- releases bump this constant only;
+# coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
@@ -214,7 +215,7 @@ DEFAULT_CONFIG = {
     "approach_distance_m": 260,   # how far before the brake zone the cue fires
     "min_loss_to_speak": 0.15,    # seconds; smaller losses stay silent
     "exit_min_loss_s": 0.2,       # in-corner loss needed for instant feedback
-    "record_frames": True,        # v2.7.0: raw 10 Hz frames into the session log (replayable)
+    "record_frames": True,        # raw frames into the session log at full rate (replayable)
     "off_min_duration_s": 0.35,   # shortest 3+ tyres-off excursion that excuses a corner
     "off_min_duration_2tyres_s": 0.9,  # a 2-tyre excursion must last this long to excuse
     "off_repeat_laps": 3,         # same corner excused this many laps running -> it counts as line
@@ -1133,11 +1134,45 @@ def _span_stats(lap_spd, lap_brk, lap_gas, lap_str, ref, z0, z1,
     for i in range(z0, z1 + 1):
         if lap_brk[i] < 0.05 and lap_gas[i] < 0.05 and lap_spd[i] > 40:
             coast_s += bin_m / max(lap_spd[i] / 3.6, 3.0)
+
+    def _brake_shape(brk, spd):
+        """(peak pedal, release duration s) for one trace's braking
+        run into the apex (v2.8.0): how hard the brake was used, and
+        how long the release took from half-peak to fully off.
+        Release shape is half of braking technique and the point-only
+        analysis never saw it."""
+        seg = brk[z0:apex_bin + 1]
+        if not seg:
+            return None, None
+        peak = max(seg)
+        if peak < 0.2:
+            return peak, None
+        rel_start = None
+        for j in range(apex_bin, z0 - 1, -1):
+            if brk[j] >= 0.5 * peak:
+                rel_start = j
+                break
+        if rel_start is None:
+            return peak, None
+        rel_s = 0.0
+        for j in range(rel_start, z1):
+            if brk[j] < 0.05:
+                break
+            rel_s += bin_m / max(spd[j] / 3.6, 3.0)
+        return peak, rel_s
+
+    peak_lap, rel_lap = _brake_shape(lap_brk, lap_spd)
+    _ref_brk = ref["brk"] if ref.get("brk") else lap_brk
+    peak_ref, rel_ref = _brake_shape(_ref_brk, ref["spd"])
     out = {"zone_time": t_lap, "ref_zone_time": t_ref,
            "span_m": round((z1 - z0) * bin_m, 1),
            "ref_apex_kmh": round(ref_apex_v, 1),
            "loss": t_lap - t_ref,
            "brake_delta_m": brake_delta_m,
+           "peak_brake": (round(peak_lap, 2) if peak_lap is not None else None),
+           "peak_brake_ref": (round(peak_ref, 2) if peak_ref is not None else None),
+           "release_s": (round(rel_lap, 2) if rel_lap is not None else None),
+           "release_ref_s": (round(rel_ref, 2) if rel_ref is not None else None),
            "apex_delta_kmh": lap_apex_v - ref_apex_v,
            "throttle_delta_m": throttle_delta_m,
            "coast_s": coast_s,
@@ -1314,6 +1349,15 @@ def _cue_candidates(s):
         out.append(("hands", f"{name}: busy hands there \u2014 one clean steering input", costs.get("hands", 0.15)))
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] >= 10:
         out.append(("brake", f"{name}: you're braking deep, watch the entry", 0.10))
+    pb, pbr = s.get("peak_brake"), s.get("peak_brake_ref")
+    if (pb is not None and pbr is not None and pbr - pb >= 0.25
+            and s.get("brake_delta_m") is not None
+            and s["apex_delta_kmh"] <= 0):
+        out.append(("brake_soft", f"{name}: you're not using all the brake there", 0.30))
+    rl, rr = s.get("release_s"), s.get("release_ref_s")
+    if (rl is not None and rr and rl < 0.55 * rr
+            and s["apex_delta_kmh"] <= -3):
+        out.append(("release", f"{name}: let the brake off more smoothly there", 0.25))
     return out
 
 
@@ -1333,7 +1377,8 @@ def _pick_candidate(s, priority=None):
         cands = [(k, t, c * 1.5 if k in ("power", "speed", "spin") else c)
                  for k, t, c in cands]
     elif priority == "entry":
-        cands = [(k, t, c * 1.5 if k in ("brake", "coast", "lockup") else c)
+        cands = [(k, t, c * 1.5 if k in ("brake", "coast", "lockup",
+                                          "brake_soft", "release") else c)
                  for k, t, c in cands]
     cands.sort(key=lambda x: -x[2])  # stable: standing order breaks ties
     kind, txt, _cost = cands[0]
@@ -1589,6 +1634,7 @@ class Coach:
         self._seen_completed = None  # last completedLaps value observed
         self._ict_peak_ms = 0        # peak iCurrentTime this lap (diagnostic)
         self.corner_history = {}   # num -> list of analyze dicts (recent laps)
+        self._cue_memory = {}      # v2.8.0: num -> last approach cue {text, lap, loss}
         self.history = None        # v2.1.0: cross-session per-combo history
         self._live_losses = {}     # v2.1.0: this lap's live per-zone results (section feedback)
         self.lap_records = []      # per-lap summaries for the debrief
@@ -2578,6 +2624,17 @@ class Coach:
         scored.sort(key=lambda x: -x[0])
         return scored
 
+    def _in_any_zone(self, cur_bin):
+        """True while the car is inside any corner zone (v2.8.0
+        scheduler gate: deferrable speech waits for a straight)."""
+        if not self.profile:
+            return False
+        for c in self.profile.corners:
+            span = (c["zone_end"] - c["zone_start"]) % NBINS
+            if (cur_bin - c["zone_start"]) % NBINS <= span:
+                return True
+        return False
+
     def _maybe_approach_cue(self, t, pos):
         if self.approach_cues_this_lap >= int(self.cfg["max_approach_cues_per_lap"]):
             return
@@ -2591,22 +2648,45 @@ class Coach:
                 continue
             corner = next(c for c in self.profile.corners if c["num"] == num)
             trig = (corner["brake_bin"] - approach_bins) % NBINS
-            # fire when current bin is within a window past the trigger
-            # (~25 m -- wide enough that 30 Hz polling can't step over it)
-            delta = (cur_bin - trig) % NBINS
-            if delta <= max(6, int(25.0 / bin_m)):
-                cue = corner_cue(
-                    latest,
-                    brake_only=(self.cfg.get("focus") == "brake"),
-                    priority=guide_priority(getattr(self.profile, "guide", None), num),
-                    guide=getattr(self.profile, "guide", None),
-                    symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
-                if cue:
+            since_trig_m = ((cur_bin - trig) % NBINS) * bin_m
+            if since_trig_m > 430:
+                continue  # window not reached yet (or long past it)
+            dist_to_brake_m = ((corner["brake_bin"] - cur_bin) % NBINS) * bin_m
+            if dist_to_brake_m < 100:
+                # Too late to be useful -- dropped, not spoken
+                # (v2.8.0 scheduler: a late cue is worse than none).
+                self.approach_fired.add(num)
+                continue
+            if self._in_any_zone(cur_bin):
+                # Mid-corner in a linked sequence: hold the cue. It
+                # stays eligible until the drop point above.
+                continue
+            cue = corner_cue(
+                latest,
+                brake_only=(self.cfg.get("focus") == "brake"),
+                priority=guide_priority(getattr(self.profile, "guide", None), num),
+                guide=getattr(self.profile, "guide", None),
+                symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
+            if cue:
+                mem = self._cue_memory.get(num)
+                if (mem and mem["text"] == cue
+                        and self.lap_number - mem["lap"] < 3
+                        and latest["loss"] <= mem["loss"] + 0.15):
+                    # v2.8.0 cue memory: the same instruction at the
+                    # same corner, recently, and no worse -- repeating
+                    # it teaches nothing. It earns its way back by
+                    # getting worse or by three laps passing.
+                    self.approach_fired.add(num)
+                    self.log("cue_suppressed", {"num": num, "reason": "repeat"})
+                else:
                     self.speaker.say(cue)
                     self.last_spoke_t = t
                     self.approach_fired.add(num)
                     self.approach_cues_this_lap += 1
-                break
+                    self._cue_memory[num] = {
+                        "text": cue, "lap": self.lap_number,
+                        "loss": latest["loss"]}
+            break
 
     def _maybe_guide_tip(self, t, pos):
         # v2.3 spoken guide tips (config "guide_spoken_tips", default
@@ -2632,7 +2712,7 @@ class Coach:
                 continue
             trig = (c["brake_bin"] - approach_bins) % NBINS
             delta = (cur_bin - trig) % NBINS
-            if delta <= max(6, int(25.0 / bin_m)):
+            if delta <= max(6, int(25.0 / bin_m)) and not self._in_any_zone(cur_bin):
                 name = c.get("name") or f"Turn {num}"
                 self.speaker.say(f"{name}: {tip_text(tips[0])}")
                 self.last_spoke_t = t
@@ -3316,11 +3396,14 @@ def run_live(cfg):
                            wheel_w=wheel_w, wheel_r=cur_radii,
                            flag=gfx.flag, penalty_s=gfx.penaltyTime)
                 frame_no += 1
-                if cfg.get("record_frames", True) and frame_no % 3 == 0:
-                    # v2.7.0 record-and-replay: downsampled raw frames
-                    # in the session log, so detectors can be re-run
-                    # (and regression-tested) on real laps later with
-                    # --replay instead of trusting synthetic ones.
+                if cfg.get("record_frames", True):
+                    # Record-and-replay: raw frames in the session
+                    # log, so detectors can be re-run (and regression-
+                    # tested) on real laps later with --replay instead
+                    # of trusting synthetic ones. v2.8.0: recorded at
+                    # the FULL acquisition rate -- at the original
+                    # 10 Hz the shortest events the coach analyzes
+                    # (0.18 s lockups) were two samples wide.
                     coach.log("frame", {
                         "t": round(now, 3),
                         "pos": round(gfx.normalizedCarPosition, 5),

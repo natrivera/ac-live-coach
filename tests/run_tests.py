@@ -241,6 +241,51 @@ check("replay rebuilds a reference from recorded frames",
       rcoach is not None and rcoach.profile.best_lap_s is not None
       and len(rcoach.lap_records) >= 1)
 
+# ---- scheduler gate + cue memory (v2.8.0) ----
+check("version lives in the code only", "version" not in CFG)
+coachA, profA = new_coach("testA__car")
+profA.track_length_m = 4406.0
+profA.corners = [
+    {"num": 1, "name": "Turn 1", "zone_start": 1250, "zone_end": 1380,
+     "brake_bin": 1300},
+    {"num": 2, "name": "Turn 2", "zone_start": 1440, "zone_end": 1650,
+     "brake_bin": 1450},
+]
+resA = {"num": 2, "name": "Turn 2", "loss": 0.5, "off": False,
+        "coast_s": 0.0, "brake_delta_m": -20.0, "apex_delta_kmh": 0.0,
+        "apex_shift_m": None, "mid_lift": False, "throttle_delta_m": None,
+        "steer_rev_delta": None, "steer_work_ratio": None,
+        "span_m": 250.0, "ref_zone_time": 10.0, "ref_apex_kmh": 80.0,
+        "lockup_s": 0.0, "spin_s": 0.0, "peak_brake": None,
+        "peak_brake_ref": None, "release_s": None, "release_ref_s": None}
+coachA.corner_history = {2: [resA]}
+coachA.last_spoke_t = -1000.0
+coachA._maybe_approach_cue(1000.0, 1340 / 2000)   # trigger inside Turn 1's zone
+check("approach cue holds while mid-corner", coachA.speaker.lines == [])
+coachA._maybe_approach_cue(1000.0, 1400 / 2000)   # on the straight: fires
+check("approach cue fires on the straight",
+      coachA.speaker.lines == ["Turn 2: brake later"])
+coachA.approach_fired.clear(); coachA.approach_cues_this_lap = 0
+coachA.lap_number += 1; coachA.last_spoke_t = -1000.0
+coachA._maybe_approach_cue(1000.0, 1400 / 2000)
+check("same cue next lap is suppressed by cue memory",
+      len(coachA.speaker.lines) == 1)
+coachA.corner_history = {2: [dict(resA, loss=0.8)]}
+coachA.approach_fired.clear(); coachA.approach_cues_this_lap = 0
+coachA.lap_number += 1; coachA.last_spoke_t = -1000.0
+coachA._maybe_approach_cue(1000.0, 1400 / 2000)
+check("a worsened leak earns the cue back", len(coachA.speaker.lines) == 2)
+
+# ---- brake-shape symptoms (v2.8.0) ----
+s_soft = dict(BASE, brake_delta_m=-12.0, peak_brake=0.55,
+              peak_brake_ref=0.95, apex_delta_kmh=-4.0)
+check("soft peak brake is its own symptom",
+      m._pick_candidate(s_soft)[0] == "brake_soft")
+s_rel = dict(BASE, brake_delta_m=None, release_s=0.2, release_ref_s=0.6,
+             apex_delta_kmh=-4.0)
+check("abrupt release is its own symptom",
+      m._pick_candidate(s_rel)[0] == "release")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
