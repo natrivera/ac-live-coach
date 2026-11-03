@@ -201,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.10.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.10.2"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -515,7 +515,7 @@ def _comms_fx(wav_bytes, click=True):
         for i, v in enumerate(noise):
             acc += a_lp * (v - acc)
             noise[i] = acc
-        y = [v + 0.055 * n for v, n in zip(y, noise)]
+        y = [v + 0.038 * n for v, n in zip(y, noise)]
         # normalize the level
         peak = max((abs(v) for v in y), default=0.0)
         if peak > 1e-4:

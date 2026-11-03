@@ -143,6 +143,9 @@ say.
 
 ## Changelog
 
+### v2.10.2
+- **Comms fx:** hiss bed trimmed about a third (driver's ear: slightly less), everything else unchanged.
+
 ### v2.10.1
 - **Comms fx, hotter:** the first cut was too polite. The chain now band-limits harder (~400 Hz–2.9 kHz), drives the saturation roughly twice as hard (transmitted radios clip), then crushes the resolution — half-rate, coarsely quantized, stretched back — for the cheap-digital-radio crunch, with a low open-channel hiss under the voice. The click is unchanged. If it overshoots, `voice_comms_fx` still turns the whole treatment off.
 
