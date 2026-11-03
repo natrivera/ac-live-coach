@@ -286,6 +286,36 @@ s_rel = dict(BASE, brake_delta_m=None, release_s=0.2, release_ref_s=0.6,
 check("abrupt release is its own symptom",
       m._pick_candidate(s_rel)[0] == "release")
 
+# ---- clause gap + voice default (v2.9.0) ----
+import io as _io, wave as _wave
+def _mk_wav(rate, seconds, val=1000):
+    buf = _io.BytesIO()
+    with _wave.open(buf, "wb") as wf:
+        wf.setnchannels(1); wf.setsampwidth(2); wf.setframerate(rate)
+        wf.writeframes(b"".join(
+            int(val).to_bytes(2, "little", signed=True)
+            for _ in range(int(rate * seconds))))
+    return buf.getvalue()
+_wa = _mk_wav(22050, 0.10); _wb = _mk_wav(22050, 0.10)
+_joined = m._splice_wavs(_wa, _wb, 0.22)
+with _wave.open(_io.BytesIO(_joined), "rb") as wf:
+    _n = wf.getnframes(); _rate = wf.getframerate()
+    _frames = wf.readframes(_n)
+_seg = _frames[int(0.15 * _rate) * 2:int(0.30 * _rate) * 2]
+check("clause splice inserts true silence",
+      abs(_n / _rate - 0.42) < 0.01 and len(_seg) > 0
+      and _seg == b"\x00" * len(_seg))
+check("splice refuses mismatched formats",
+      m._splice_wavs(_wa, _mk_wav(16000, 0.1), 0.2) is None)
+check("default voice is lessac-high", CFG["piper_voice"] == "en_US-lessac-high")
+check("clause gap configured", CFG["exit_clause_gap_ms"] == 220)
+_logs = []
+_sp = m.Speaker(CFG, lambda ev, d: _logs.append((ev, d)))
+_sp.enabled = False
+_sp.say_clauses("Sunset: lost 3 tenths there", "brake later", 220)
+check("say_clauses logs the combined line",
+      ("cue", {"text": "Sunset: lost 3 tenths there -- brake later"}) in _logs)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

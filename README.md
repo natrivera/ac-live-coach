@@ -143,6 +143,11 @@ say.
 
 ## Changelog
 
+### v2.9.0
+- **Exit feedback breathes:** the exit line is now spoken as two clauses with a real slice of silence spliced between the measurement and the instruction ("Sunset: lost 3 tenths there" — 220 ms — "brake later"), instead of one welded sentence. The pause is exact on the Piper engine (rendered into the audio) and natural on the SAPI fallback (separate utterances). Tunable via `exit_clause_gap_ms`; the session log keeps the familiar single-line form.
+- **New default voice: en_US-lessac-high** — the same voice as before, one quality tier up (114 MB one-time download, SHA-256 pinned like the medium model). Any other Piper voice still works via `piper_voice`.
+- Tests grow to 39 checks, including the silence splice.
+
 ### v2.8.0
 - **Audit first:** `docs/AUDIT-2026-11-03.md` maps the comprehensive development review against the code — what exists, what's missing, what's a deliberate non-goal — and the prioritized plan that follows from it. This release implements its first slice.
 - **Version, single source of truth:** the session/report stamp came from a hardcoded constant that releases had stopped bumping (it read 2.5.3 through three releases) while the config carried a second, unread version key. The code constant is now the only version; the config key is removed.

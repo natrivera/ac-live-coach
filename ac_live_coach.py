@@ -201,14 +201,15 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.8.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.9.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
     "voice_enabled": True,
     "voice_engine": "piper",      # v2.2: "piper" = offline neural voice; "sapi" = built-in Windows voice
-    "piper_voice": "en_US-lessac-medium",  # any piper-voices name; downloaded once into voices/
+    "piper_voice": "en_US-lessac-high",  # any piper-voices name; downloaded once into voices/
     "piper_length_scale": 1.0,    # piper speech rate: <1 faster, >1 slower
+    "exit_clause_gap_ms": 220,    # v2.9.0: silence spliced between an exit line's measurement and its fix
     "piper_dir": "",              # voice model folder; empty = <app dir>/voices
     "voice_rate": 178,            # words per minute (SAPI engine)
     "voice": "",                  # SAPI voice name fragment ("zira", "david"); empty = system default
@@ -394,6 +395,10 @@ def _piper_urls(voice_name):
 # are shape-validated but unpinned -- piper-tts prints no hash for
 # them here, so they load as downloaded.
 PIPER_PINNED_SHA256 = {
+    "en_US-lessac-high": {
+        "onnx": "4cabf7c3a638017137f34a1516522032d4fe3f38228a843cc9b764ddcbcd9e09",
+        "json": "db42b97d9859f257bc1561b8ed980e7fb2398402050a74ddd6cbec931a92412f",
+    },
     "en_US-lessac-medium": {
         "onnx": "5efe09e69902187827af646e1a6e9d269dee769f9877d17b16b1b46eeaaf019f",
         "json": "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
@@ -408,6 +413,34 @@ def _sha256_of(path):
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+
+def _splice_wavs(a_bytes, b_bytes, gap_s):
+    """Join two WAV byte strings with gap_s of true silence between
+    them (v2.9.0). Returns None when the formats differ -- the caller
+    falls back to speaking the clauses separately."""
+    import io
+    import wave
+    try:
+        wa = wave.open(io.BytesIO(a_bytes), "rb")
+        wb = wave.open(io.BytesIO(b_bytes), "rb")
+        params = wa.getparams()
+        if (wb.getframerate() != params.framerate
+                or wb.getnchannels() != params.nchannels
+                or wb.getsampwidth() != params.sampwidth):
+            return None
+        frames_a = wa.readframes(wa.getnframes())
+        frames_b = wb.readframes(wb.getnframes())
+        silence = b"\x00" * (int(params.framerate * gap_s)
+                             * params.sampwidth * params.nchannels)
+        out = io.BytesIO()
+        with wave.open(out, "wb") as wf:
+            wf.setparams(params)
+            wf.writeframes(frames_a + silence + frames_b)
+        return out.getvalue()
+    except Exception:
+        return None
 
 
 class Speaker:
@@ -571,6 +604,23 @@ class Speaker:
                 pass
             return False
 
+    def _speak_piper_clauses(self, a, b, gap_ms):
+        if not self._piper_ensure():
+            return False
+        try:
+            data = _splice_wavs(self._piper_render(a),
+                                self._piper_render(b),
+                                max(0, int(gap_ms)) / 1000.0)
+            if data is None:
+                return False
+            import winsound
+            winsound.PlaySound(data, winsound.SND_MEMORY)
+            self._piper_fails = 0
+            return True
+        except Exception as e:
+            print(f"[voice] piper error on a cue ({e})")
+            return False
+
     # -- sapi ---------------------------------------------------------------
 
     def _apply_voice(self, engine):
@@ -635,6 +685,20 @@ class Speaker:
                 except Exception:
                     pass
 
+    def _speak_clauses(self, a, b, gap_ms):
+        if self.engine == "piper" and not self._piper_disabled:
+            if self._speak_piper_clauses(a, b, gap_ms):
+                return
+            self._piper_fails += 1
+            if self._piper_fails >= 3:
+                self._piper_disabled = True
+                print("[voice] piper failed 3 cues in a row; "
+                      "the Windows voice takes over for this session")
+        # Two separate utterances: the fresh SAPI engine per clause
+        # gives the beat on its own.
+        self._speak(a)
+        self._speak(b)
+
     # -- queue --------------------------------------------------------------
 
     def _speak(self, text):
@@ -653,7 +717,7 @@ class Speaker:
             item = self.q.get()
             if item is None:
                 break
-            ts, text = item
+            ts, text, clauses = item
             if time.time() - ts > 15.0:
                 # A cue that waited >15 s in the queue is about a corner
                 # the driver has already finished. Speaking it late is
@@ -666,7 +730,10 @@ class Speaker:
                     pass
                 continue
             try:
-                self._speak(text)
+                if clauses:
+                    self._speak_clauses(*clauses)
+                else:
+                    self._speak(text)
             except Exception:
                 pass
 
@@ -674,7 +741,18 @@ class Speaker:
         self.log("cue", {"text": text})
         print(f"  >> COACH: {text}")
         if self.enabled:
-            self.q.put((time.time(), text))
+            self.q.put((time.time(), text, None))
+
+    def say_clauses(self, a, b, gap_ms=220):
+        """Speak two clauses with a real beat of silence between
+        them (v2.9.0): exit feedback reads as measurement, pause,
+        instruction, instead of one welded sentence. The session log
+        keeps the familiar single-line 'a -- b' form."""
+        text = f"{a} -- {b}"
+        self.log("cue", {"text": text})
+        print(f"  >> COACH: {text}")
+        if self.enabled:
+            self.q.put((time.time(), text, (a, b, int(gap_ms))))
 
 
 # --------------------------------------------------------------------------
@@ -2750,6 +2828,7 @@ class Coach:
                                   lap_str=str_live)[0]
                 self._live_losses[num] = res  # v2.1.0: section feedback feedstock
                 line = None
+                fix_text = None
                 # Minor zones (shallow dips) must lose more before
                 # they earn a callout -- more places, not more talking.
                 minor = bool(c.get("minor"))
@@ -2770,12 +2849,23 @@ class Coach:
                         symptom_tips=bool(self.cfg.get(
                             "guide_symptom_tips", True)))
                     if fix and ": " in fix:
-                        line += f" -- {fix.split(': ', 1)[1]}"
+                        fix_text = fix.split(": ", 1)[1]
                 elif res["loss"] >= (0.20 if minor else 0.10) and res["coast_s"] >= 2.0:
                     line = (f"{c['name']}: big coast there, costing "
                             f"{tenths_phrase(res['loss'])}")
                 if line:
-                    self.speaker.say(line)
+                    if fix_text:
+                        # v2.9.0: measurement [beat] instruction --
+                        # spoken as two clauses with a spliced pause
+                        # when the speaker supports it.
+                        say_clauses = getattr(self.speaker, "say_clauses", None)
+                        if say_clauses:
+                            say_clauses(line, fix_text, int(
+                                self.cfg.get("exit_clause_gap_ms", 220)))
+                        else:
+                            self.speaker.say(f"{line} -- {fix_text}")
+                    else:
+                        self.speaker.say(line)
                     self.last_spoke_t = t
                     self._exit_spoken += 1
                 else:

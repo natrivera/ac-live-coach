@@ -20,10 +20,11 @@
   "section_feedback": true,
   "section_min_loss_s": 0.45,
   "voice_engine": "piper",
-  "piper_voice": "en_US-lessac-medium",
+  "piper_voice": "en_US-lessac-high",
   "piper_length_scale": 1.0,
   "piper_dir": "",
   "guide_spoken_tips": false,
   "guide_symptom_tips": true,
-  "record_frames": true
+  "record_frames": true,
+  "exit_clause_gap_ms": 220
 }
