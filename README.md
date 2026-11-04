@@ -119,6 +119,11 @@ the numbers behind it, are in there.
 - `section_feedback` / `section_min_loss_s` — section callouts
 - `guide_spoken_tips` — speak each guided corner's first tip
   once per session (default off; see `guides/`)
+- `brake_tone` — one short tone at the reference lap's brake
+  point for each corner (default off; a training aid — corners
+  the reference lap didn't brake for stay silent).
+  `brake_tone_volume` sets its level against the voice;
+  `brake_tone_lead_m` moves it earlier by that many metres
 - `voice_enabled` — false = console only
 
 ## Known limits
@@ -142,6 +147,10 @@ synthetic track with planted driving faults and prints what it would
 say.
 
 ## Changelog
+
+### v2.12.0
+- **Brake-point tone (opt-in):** with `brake_tone` on, the coach plays one short tone (150 ms, 880 Hz) the moment the car crosses the reference lap's brake point for the next corner — an audio marker that survives losing the visual one mid-battle. Corners the reference lap lifted for instead of braking stay silent: no beep means no brake. It runs under the same out-lap and off-pace mute as the voice cues, fires once per corner per lap, and only into an idle audio channel — if the coach is mid-sentence at the brake point, the tone is dropped for that lap rather than landing late and teaching the wrong point (drops are logged). Level is set against the voice with `brake_tone_volume`; `brake_tone_lead_m` moves the tone earlier. The tone bypasses the comms fx — a radio treatment would smear a marker this short. Source: the brake tones were the most praised feature in two independent reviews of rival coaches (the Nov 3 landscape research, and Sim Racing Kez's four-coach comparison, Nov 4).
+- Tests grow to 57 checks, including tone targeting, the busy-channel drop and the rendered wav's format.
 
 ### v2.11.0
 - **Report chart, three laps:** the speed/pedal chart now draws the three laps that matter — the **best lap ever** (the stored reference, blue), the **optimal lap** (purple, dashed: the reference with each zone swapped for the best clean execution of it from this session, its stitched time in the legend), and the **best lap of this session** (orange). Speed on top for all three; below, a brake line per lap in its own color over the reference throttle fill. Corner markers still come from the reference lap. The old last-lap overlay is retired — the session best is the more useful trace. Off zones never enter the optimal: a cut is not a line.

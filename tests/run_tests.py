@@ -27,9 +27,20 @@ def check(name, cond, extra=""):
 class FakeSpeaker:
     def __init__(self):
         self.lines = []
+        self.tones = 0
+        self.busy = False
 
     def say(self, text, **kw):
         self.lines.append(text)
+
+    def say_clauses(self, a, b, gap_ms=220):
+        self.lines.append(f"{a} -- {b}")
+
+    def tone(self):
+        self.tones += 1
+
+    def tone_ready(self):
+        return not self.busy
 
 
 TMP = tempfile.mkdtemp(prefix="coach_tests_")
@@ -392,6 +403,55 @@ _html = m._trace_svg(profB, coachB._session_best, coachB._optimal)
 check("chart draws all three laps",
       all(k in _html for k in ("Best ever", "Optimal", "Best this session")))
 check("chart falls back to the reference alone", m._trace_svg(profB) != "")
+
+# ---- brake tone (v2.12.0) ----
+tcfg = dict(CFG, brake_tone=True)
+tcoach = m.Coach(tcfg, FakeSpeaker(), lambda *a, **k: None)
+tprof = m.TrackProfile("tone__car")
+tcoach.set_profile(tprof)
+tprof.track_length_m = 5000.0
+tprof.corners = [
+    {"num": 1, "name": "Turn 1", "brake_bin": 940, "has_brake_zone": True},
+    {"num": 2, "name": "Lift", "brake_bin": 300, "has_brake_zone": False},
+]
+tcoach._prev_bin = 930
+tcoach._maybe_brake_tone(10.0, 941 / m.NBINS)
+check("tone: fires at the reference brake point", tcoach.speaker.tones == 1)
+tcoach._prev_bin = 941
+tcoach._maybe_brake_tone(10.1, 950 / m.NBINS)
+check("tone: once per corner per lap", tcoach.speaker.tones == 1)
+tcoach.reset_next_approach_state()
+tcoach._prev_bin = 930
+tcoach._maybe_brake_tone(11.0, 941 / m.NBINS)
+check("tone: re-arms next lap", tcoach.speaker.tones == 2)
+tcoach.reset_next_approach_state()
+tcoach.speaker.busy = True
+tcoach._prev_bin = 930
+tcoach._maybe_brake_tone(12.0, 941 / m.NBINS)
+tcoach.speaker.busy = False
+tcoach._prev_bin = 941
+tcoach._maybe_brake_tone(12.1, 950 / m.NBINS)
+check("tone: busy channel drops it for the lap", tcoach.speaker.tones == 2)
+tcoach.reset_next_approach_state()
+tcoach._prev_bin = 290
+tcoach._maybe_brake_tone(13.0, 301 / m.NBINS)
+check("tone: silent where the reference did not brake",
+      tcoach.speaker.tones == 2)
+ocoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+oprof = m.TrackProfile("tone2__car")
+ocoach.set_profile(oprof)
+oprof.track_length_m = 5000.0
+oprof.corners = [{"num": 1, "brake_bin": 940, "has_brake_zone": True}]
+ocoach._prev_bin = 930
+ocoach._maybe_brake_tone(14.0, 941 / m.NBINS)
+check("tone: off by default", ocoach.speaker.tones == 0)
+import io
+import wave as _wave
+_data = m.Speaker._render_tone_wav(0.7)
+with _wave.open(io.BytesIO(_data), "rb") as _wf:
+    check("tone: wav is 22050 Hz mono, ~150 ms",
+          _wf.getframerate() == 22050 and _wf.getnchannels() == 1
+          and 3000 < _wf.getnframes() < 3400)
 
 print()
 if FAILS:

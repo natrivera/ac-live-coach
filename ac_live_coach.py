@@ -201,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.11.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.12.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -549,6 +549,8 @@ class Speaker:
         self.cfg = cfg
         self.log = log_fn
         self.q = queue.Queue()
+        self._speaking = False
+        self._tone_cache = {}
         self.enabled = bool(cfg.get("voice_enabled", True))
         self._voice_id = None
         self._voice_resolved = False
@@ -828,6 +830,18 @@ class Speaker:
             if item is None:
                 break
             ts, text, clauses = item
+            if clauses and clauses[0] == "__tone__":
+                # A brake tone is only true at its moment: played
+                # within ~1.5 s of the brake point or not at all --
+                # never as a late surprise behind queued speech.
+                if time.time() - ts <= 1.5:
+                    self._speaking = True
+                    try:
+                        self._play_tone()
+                    except Exception:
+                        pass
+                    self._speaking = False
+                continue
             if time.time() - ts > 15.0:
                 # A cue that waited >15 s in the queue is about a corner
                 # the driver has already finished. Speaking it late is
@@ -840,12 +854,14 @@ class Speaker:
                     pass
                 continue
             try:
+                self._speaking = True
                 if clauses:
                     self._speak_clauses(*clauses)
                 else:
                     self._speak(text)
             except Exception:
                 pass
+            self._speaking = False
 
     def say(self, text):
         self.log("cue", {"text": text})
@@ -863,6 +879,56 @@ class Speaker:
         print(f"  >> COACH: {text}")
         if self.enabled:
             self.q.put((time.time(), text, (a, b, int(gap_ms))))
+
+    # -- brake tone (v2.12.0) ------------------------------------------
+
+    def tone_ready(self):
+        """True when the audio channel is idle: nothing playing,
+        nothing queued. A brake tone fired into a busy channel would
+        land late or talk over a cue, so the coach drops it instead
+        (a late tone teaches the wrong brake point)."""
+        return bool(self.enabled and not self._speaking and self.q.empty())
+
+    def tone(self):
+        if self.enabled:
+            self.q.put((time.time(), "", ("__tone__",)))
+
+    @staticmethod
+    def _render_tone_wav(volume):
+        """A single 150 ms sine burst at 880 Hz with a raised-cosine
+        envelope (no clicks at the ends), 22050 Hz 16-bit mono -- the
+        format Piper renders, so it plays through the same winsound
+        path. Deliberately NOT run through the comms fx: the radio
+        treatment would smear a tone this short, and the tone is a
+        marker, not a transmission."""
+        import io
+        import struct
+        import wave
+        sr = 22050
+        n = int(sr * 0.15)
+        vol = min(1.0, max(0.0, float(volume)))
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            frames = bytearray()
+            for i in range(n):
+                env = 0.5 - 0.5 * math.cos(2 * math.pi * i / max(1, n - 1))
+                s = math.sin(2 * math.pi * 880 * i / sr) * env * vol * 0.9
+                frames += struct.pack("<h", int(32767 * s))
+            wf.writeframes(bytes(frames))
+        return buf.getvalue()
+
+    def _play_tone(self):
+        vol = float(self.cfg.get("brake_tone_volume", 0.7))
+        key = round(vol, 2)
+        data = self._tone_cache.get(key)
+        if data is None:
+            data = self._render_tone_wav(vol)
+            self._tone_cache[key] = data
+        import winsound
+        winsound.PlaySound(data, winsound.SND_MEMORY)
 
 
 # --------------------------------------------------------------------------
@@ -1833,6 +1899,7 @@ class Coach:
         self.approach_fired = set()
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
+        self._tone_fired = set()
         self._exit_spoken = 0
         self.last_spoke_t = -1e9
         self.lap_number = 0
@@ -2399,6 +2466,7 @@ class Coach:
                     and (t - self.lap_start_t) / pos > 1.15 * self.profile.best_lap_s):
                 pass  # this lap is far off the pace -- an out/in lap
             else:
+                self._maybe_brake_tone(t, pos)
                 self._maybe_approach_cue(t, pos)
                 self._maybe_guide_tip(t, pos)
                 self._maybe_exit_feedback(t, pos)
@@ -2713,6 +2781,7 @@ class Coach:
         self.approach_fired = set()
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
+        self._tone_fired = set()
         self._exit_spoken = 0
         self._live_losses = {}
 
@@ -2826,6 +2895,39 @@ class Coach:
             if (cur_bin - c["zone_start"]) % NBINS <= span:
                 return True
         return False
+
+    def _maybe_brake_tone(self, t, pos):
+        # v2.12.0 brake tone (opt-in, config "brake_tone", default
+        # off): one short tone as the car crosses the reference lap's
+        # brake point for the next corner -- an audio marker that
+        # survives losing the visual one (the Bloops lesson from the
+        # Kez review, and the brake tones singled out in the Nov 3
+        # landscape research). Corners the reference lap did not
+        # brake for stay silent: no beep means no brake. Runs under
+        # the same out-lap / off-pace mute as the voice cues, fires
+        # once per corner per lap, and only into an idle audio
+        # channel -- a tone queued behind speech would land late and
+        # teach the wrong point, so a busy channel drops it for the
+        # lap (logged as tone_dropped_busy).
+        if not self.cfg.get("brake_tone", False):
+            return
+        cur_bin = int(pos * NBINS) % NBINS
+        lead_bins = int(float(self.cfg.get("brake_tone_lead_m", 0))
+                        / self.profile.bin_m)
+        for c in self.profile.corners:
+            num = c["num"]
+            if num in self._tone_fired or not c.get("has_brake_zone"):
+                continue
+            target = (c["brake_bin"] - lead_bins) % NBINS
+            if self._crossed(self._prev_bin, cur_bin, target):
+                self._tone_fired.add(num)
+                if self.speaker.tone_ready():
+                    self.speaker.tone()
+                    self.log("tone", {"num": num,
+                                      "name": c.get("name")})
+                else:
+                    self.log("tone_dropped_busy", {"num": num})
+                break
 
     def _maybe_approach_cue(self, t, pos):
         if self.approach_cues_this_lap >= int(self.cfg["max_approach_cues_per_lap"]):
@@ -3858,6 +3960,13 @@ def run_replay(cfg, path):
         def say(self, text, **kw):
             self.lines.append(text)
             print(f"  [say] {text}")
+
+        def tone(self):
+            self.lines.append("<brake tone>")
+            print("  [tone]")
+
+        def tone_ready(self):
+            return True
 
     speaker = ReplaySpeaker()
     coach = Coach(cfg, speaker, lambda *a, **k: None)
