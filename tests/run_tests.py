@@ -634,7 +634,8 @@ check("sass 1: clean lap gets the dry closer",
       any("Nothing to fix." in ln for ln in _sc1b.speaker.lines))
 
 # ---- briefing variety (v2.14.0) ----
-_bcoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+_bcoach = m.Coach(dict(CFG, sass_level=0), FakeSpeaker(),
+                  lambda *a, **k: None)
 _bprof = m.TrackProfile("brief__car")
 _bcoach.set_profile(_bprof)
 _bprof.best_lap_s = 100.0
