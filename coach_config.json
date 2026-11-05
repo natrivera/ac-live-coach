@@ -29,7 +29,8 @@
   "exit_clause_gap_ms": 220,
   "voice_comms_fx": true,
   "voice_comms_click": true,
-  "brake_tone": false,
+  "brake_tone": true,
   "brake_tone_volume": 0.7,
-  "brake_tone_lead_m": 0
+  "brake_tone_lead_m": 0,
+  "sass_level": 3
 }

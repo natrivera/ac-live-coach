@@ -120,7 +120,7 @@ the numbers behind it, are in there.
 - `guide_spoken_tips` — speak each guided corner's first tip
   once per session (default off; see `guides/`)
 - `brake_tone` — one short tone at the reference lap's brake
-  point for each corner (default off; a training aid — corners
+  point for each corner (default on; a training aid — corners
   the reference lap didn't brake for stay silent).
   `brake_tone_volume` sets its level against the voice;
   `brake_tone_lead_m` moves it earlier by that many metres;
@@ -129,10 +129,11 @@ the numbers behind it, are in there.
 - `position_fallback` — when a track mod reports no spline
   position, derive position from the lap timer + odometer so
   coaching still works (default on)
-- `sass_level` — the coach's personality spectrum: 0 = pro
-  (default), 1 = lap summaries draw from dry variant pools,
+- `sass_level` — the coach's personality spectrum: 0 = pro,
+  1 = lap summaries draw from dry variant pools,
   2 = repeat-offender and well-off-pace lines join in and exit
-  feedback gets its "again" forms, 3 = the sharpest pool entries.
+  feedback gets its "again" forms, 3 = the sharpest pool entries
+  (default 3).
   Sass never changes the numbers or the fixes, and never enters
   approach cues. The out-lap briefing's phrasing rotates at every
   level — same facts, varied frames
@@ -159,6 +160,9 @@ synthetic track with planted driving faults and prints what it would
 say.
 
 ## Changelog
+
+### v2.14.1
+- **New defaults, by the driver's call:** the brake tone is on out of the box (`brake_tone` default true — its two silent sessions traced to an opt-in flag and a busy-channel drop, both now closed), and the sass spectrum defaults to full (`sass_level` 3). Either is still one config line to turn down or off; local configs carrying their own lines keep them.
 
 ### v2.14.0
 - **Coast is a location, not a diagnosis:** the most-spoken fix used to be "less coasting, commit to a pedal" wherever it appeared, because raw coast time out-costed every other symptom. The zone analysis now splits coast at the apex (rolling in vs waiting after it), measures the speed carried into the zone, and knows each corner's predecessor — so the cues name the mechanism: braking done early + an entry roll becomes "you're done braking early and rolling to the apex — brake later, carry it in"; an exit coast with a late throttle point becomes "you're waiting to get back to power — pick it up at the apex"; an entry-speed deficit is called what it is — "you're arriving slow — that's the previous corner's exit, not this corner". The generic line survives for a coast spread evenly across a zone. Exit feedback's "big coast" line got the same split ("big roll to the apex" / "slow back to power"). Verified on the driver's real Laguna Seca laps, where Turn 6's summary now tells the braking story instead of the coasting one.

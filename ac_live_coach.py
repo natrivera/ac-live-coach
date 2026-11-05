@@ -202,7 +202,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.14.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.14.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -235,12 +235,12 @@ DEFAULT_CONFIG = {
     "section_feedback": True,     # v2.1.0: one line per track section when its small losses add up
     "section_min_loss_s": 0.45,   # section total that earns a section line
     "expected_track_hint": "buttonwillow",  # soft check only; app runs anywhere
-    "brake_tone": False,          # v2.12.0: one short tone at the reference brake point per corner
+    "brake_tone": True,           # v2.12.0: one short tone at the reference brake point per corner (default on since v2.14.1, Albert's call)
     "brake_tone_volume": 0.7,     # tone loudness 0..1
     "brake_tone_lead_m": 0,       # fire the tone this many metres before the brake point
     "brake_tone_late_m": 25,      # v2.13.0: a tone held by a busy channel may still fire up to this many metres past the point
     "position_fallback": True,    # v2.13.0: when a track reports no spline position, coach by distance (lap timer + odometer)
-    "sass_level": 0,              # v2.14.0: coach personality spectrum: 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharpest pools
+    "sass_level": 3,              # v2.14.0: coach personality spectrum: 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharpest pools (default 3 since v2.14.1, Albert's call)
 }
 
 
@@ -3254,8 +3254,8 @@ class Coach:
         return False
 
     def _maybe_brake_tone(self, t, pos):
-        # v2.12.0 brake tone (opt-in, config "brake_tone", default
-        # off): one short tone as the car crosses the reference lap's
+        # v2.12.0 brake tone (config "brake_tone", default on
+        # since v2.14.1): one short tone as the car crosses the reference lap's
         # brake point for the next corner -- an audio marker that
         # survives losing the visual one (the Bloops lesson from the
         # Kez review, and the brake tones singled out in the Nov 3
