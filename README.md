@@ -123,7 +123,12 @@ the numbers behind it, are in there.
   point for each corner (default off; a training aid — corners
   the reference lap didn't brake for stay silent).
   `brake_tone_volume` sets its level against the voice;
-  `brake_tone_lead_m` moves it earlier by that many metres
+  `brake_tone_lead_m` moves it earlier by that many metres;
+  `brake_tone_late_m` is how far past the point a tone held by a
+  busy voice channel may still fire (default 25)
+- `position_fallback` — when a track mod reports no spline
+  position, derive position from the lap timer + odometer so
+  coaching still works (default on)
 - `voice_enabled` — false = console only
 
 ## Known limits
@@ -147,6 +152,11 @@ synthetic track with planted driving faults and prints what it would
 say.
 
 ## Changelog
+
+### v2.13.0
+- **Distance position fallback:** some mod tracks ship no working AI spline, so AC reports the car's track position as a constant (the Rainbow Road conversion: 0.0 in every frame of a six-lap session — no laps registered, no reference, no cues). The coach now detects a dead spline (position never varies over 200 m of travel) and derives position from the game's own lap timer segmented over the odometer, normalised by a lap length learned from two consecutive laps that agree within 2% (a saved profile length validates against a single lap). Frames are buffered while the length is learned, then replayed through the normal pipeline, so bins, zones, cues, tones and the report all work unchanged; the coach says once that it is coaching by distance. Verified by replaying the real Rainbow Road session: length learned 2,902 m, reference and 11 corners built, laps and tones reconstructed. New knob: `position_fallback` (default on).
+- **Brake tone, held instead of dropped:** a tone that reached its brake point while the coach was mid-sentence was dropped for the lap — which, per the driver's first live report, is exactly when the beeps were expected. It is now held and fired the moment the voice channel frees, as long as the car is still within `brake_tone_late_m` metres past the point (default 25) and 2 s of the crossing; only past that window is it dropped, still logged. Session logs mark delayed tones.
+- Tests grow to 68 checks, including the late-window fire/drop and a full synthetic spline-less session (reference built, laps counted, corners detected).
 
 ### v2.12.0
 - **Brake-point tone (opt-in):** with `brake_tone` on, the coach plays one short tone (150 ms, 880 Hz) the moment the car crosses the reference lap's brake point for the next corner — an audio marker that survives losing the visual one mid-battle. Corners the reference lap lifted for instead of braking stay silent: no beep means no brake. It runs under the same out-lap and off-pace mute as the voice cues, fires once per corner per lap, and only into an idle audio channel — if the coach is mid-sentence at the brake point, the tone is dropped for that lap rather than landing late and teaching the wrong point (drops are logged). Level is set against the voice with `brake_tone_volume`; `brake_tone_lead_m` moves the tone earlier. The tone bypasses the comms fx — a radio treatment would smear a marker this short. Source: the brake tones were the most praised feature in two independent reviews of rival coaches (the Nov 3 landscape research, and Sim Racing Kez's four-coach comparison, Nov 4).

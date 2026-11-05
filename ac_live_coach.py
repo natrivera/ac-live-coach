@@ -201,7 +201,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.12.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.13.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -234,6 +234,11 @@ DEFAULT_CONFIG = {
     "section_feedback": True,     # v2.1.0: one line per track section when its small losses add up
     "section_min_loss_s": 0.45,   # section total that earns a section line
     "expected_track_hint": "buttonwillow",  # soft check only; app runs anywhere
+    "brake_tone": False,          # v2.12.0: one short tone at the reference brake point per corner
+    "brake_tone_volume": 0.7,     # tone loudness 0..1
+    "brake_tone_lead_m": 0,       # fire the tone this many metres before the brake point
+    "brake_tone_late_m": 25,      # v2.13.0: a tone held by a busy channel may still fire up to this many metres past the point
+    "position_fallback": True,    # v2.13.0: when a track reports no spline position, coach by distance (lap timer + odometer)
 }
 
 
@@ -1900,6 +1905,7 @@ class Coach:
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
         self._tone_fired = set()
+        self._tone_pending = None      # v2.13.0: brake tone held for a busy channel
         self._exit_spoken = 0
         self.last_spoke_t = -1e9
         self.lap_number = 0
@@ -1916,6 +1922,25 @@ class Coach:
         self._pitted = False           # long stop seen during the current lap
         self._teleported = False       # position reset seen during the current lap
         self._lap_muted = False        # current lap follows a stop/teleport: no live cues
+        # v2.13.0 distance position fallback. Some mod tracks ship no
+        # working AI spline, so AC reports normalizedCarPosition as a
+        # constant (Rainbow Road: exactly 0.0 for a whole session) and
+        # position-based coaching starves. The fallback derives
+        # position from the game's lap timer plus the odometer --
+        # see _position_route.
+        self._pos_src = "unknown"      # unknown -> "spline" | "distance"
+        self._pos_lo = None            # raw spline range seen pre-verdict
+        self._pos_hi = None
+        self._pos_travel = 0.0         # moving distance pre-verdict (m)
+        self._pos_last_dist = None
+        self._fb_buf = None            # buffered feed frames while learning
+        self._fb_base_dist = None      # odometer at current lap start
+        self._fb_base_t = None
+        self._fb_prev_ict = None       # last lap-timer value (reset detect)
+        self._fb_cands = []            # plausible candidate lap distances
+        self._fb_len = None            # learned lap length (m)
+        self._fb_lap_len = None        # length snapshot for current lap
+        self._fb_skip_officials = 0    # settled officials for dropped laps
 
     # -- session wiring ----------------------------------------------------
     # Names for the Buttonwillow seven-zone map, as corrected by
@@ -2206,8 +2231,14 @@ class Coach:
                     # Guard: if a finish was somehow never detected
                     # (crossing below the wrap speed threshold), don't
                     # let unpaired officials accumulate and shift the
-                    # pairing for the rest of the session.
-                    while len(self.official_times) > len(self.pending_finishes) + 1:
+                    # pairing for the rest of the session. While the
+                    # distance fallback is still learning (v2.13.0),
+                    # finishes are DELAYED in the buffer, not missed:
+                    # allow for the laps the buffer is holding.
+                    cap = len(self.pending_finishes) + 1
+                    if self._fb_buf is not None:
+                        cap += len(self._fb_cands) + 2
+                    while len(self.official_times) > cap:
                         self.official_times.pop(0)
                 self._official_watch = None
                 self._pump_finishes(t)
@@ -2392,6 +2423,216 @@ class Coach:
             return
         if not live:
             return
+        if self.cfg.get("position_fallback", True) and self._pos_src != "spline":
+            kw = {"brake": brake, "gas": gas, "dist_m": dist_m, "live": live,
+                  "ict_ms": ict_ms, "heading": heading, "tyres_out": tyres_out,
+                  "steer": steer, "wheel_w": wheel_w, "wheel_r": wheel_r,
+                  "flag": flag, "penalty_s": penalty_s}
+            if self._position_route(t, pos, speed_kmh, dist_m, ict_ms, kw):
+                return
+        self._feed_at(t, pos, speed_kmh, brake, gas, dist_m, live=live,
+                      ict_ms=ict_ms, heading=heading, tyres_out=tyres_out,
+                      steer=steer, wheel_w=wheel_w, wheel_r=wheel_r,
+                      flag=flag, penalty_s=penalty_s)
+
+    # -- distance position fallback (v2.13.0) ------------------------------
+    # AC computes normalizedCarPosition from the track's AI spline.
+    # Mod tracks without a working spline report a constant (the
+    # Rainbow Road conversion: 0.0 in every frame of Albert's Nov 4
+    # session -- six laps driven, none registered, no reference, no
+    # cues, no deltas). The fallback watches the raw value while the
+    # car first moves: if it never varies over 200 m of travel, the
+    # spline is dead and position is derived instead from the game's
+    # own lap timer (iCurrentTime resets at the line) segmented over
+    # the odometer (distanceTraveled), normalised by a lap length
+    # learned from two consecutive laps that agree within 2% (a
+    # saved profile length, when one exists, only needs one lap
+    # within 3% to validate). Frames are buffered while learning --
+    # a lap cannot be binned before its length is known -- then
+    # replayed through _feed_at with synthetic positions, so every
+    # downstream system (bins, zones, cues, tone, report) works
+    # unchanged. Frames before the first in-buffer timer reset are
+    # the tail of a partial lap whose start was never recorded;
+    # they are dropped, and their settled official time is skipped
+    # at flush so lap/time pairing stays exact.
+
+    def _fb_pos(self, dist_m):
+        if self._fb_base_dist is None or not self._fb_lap_len:
+            return 0.0
+        p = (dist_m - self._fb_base_dist) / self._fb_lap_len
+        return min(0.9999, max(0.0, p))
+
+    def _position_route(self, t, raw_pos, speed_kmh, dist_m, ict_ms, kw):
+        """Decide where this frame's position comes from. Returns
+        True when the frame is fully handled here (buffered, flushed,
+        or fed with a synthetic position); False means: feed the raw
+        spline position as usual."""
+        if self._pos_src == "unknown":
+            if self._pos_lo is None or raw_pos < self._pos_lo:
+                self._pos_lo = raw_pos
+            if self._pos_hi is None or raw_pos > self._pos_hi:
+                self._pos_hi = raw_pos
+            if self._pos_last_dist is not None and speed_kmh > 10:
+                dd = dist_m - self._pos_last_dist
+                if 0.0 < dd < 60.0:
+                    self._pos_travel += dd
+            self._pos_last_dist = dist_m
+            rng = (self._pos_hi - self._pos_lo) if self._pos_lo is not None else 0.0
+            if rng >= 0.01:
+                self._pos_src = "spline"
+                return False
+            if self._pos_travel < 200.0 or rng >= 0.002:
+                return False  # still deciding: spline passthrough
+            # Spline is dead: latch distance mode and wipe the
+            # partial lap the constant position polluted.
+            self._pos_src = "distance"
+            self.reset_lap()
+            self.prev_pos = None
+            self.prev_dist = None
+            self.lap_start_t = None
+            self.lap_start_dist = None
+            seed = None
+            if self.profile is not None and self.profile.track_length_m:
+                seed = float(self.profile.track_length_m)
+            self._fb_len = seed
+            self._fb_buf = []
+            self._fb_base_dist = dist_m
+            self._fb_base_t = t
+            self._fb_prev_ict = ict_ms
+            self._fb_skip_officials = 1 if (ict_ms or 0) > 3000 else 0
+            print("[coach] this track reports no spline position -- "
+                  "coaching by distance (lap timer + odometer)")
+            try:
+                self.log("position_fallback", {"seed_length_m": seed})
+            except Exception:
+                pass
+        # ---- distance mode ----
+        crossed = False
+        if ict_ms is not None:
+            prev = self._fb_prev_ict
+            if (prev is not None and prev > 20000
+                    and ict_ms < prev - 5000 and ict_ms < 5000):
+                crossed = True
+            self._fb_prev_ict = ict_ms
+        if self._fb_len is not None and self._fb_buf is None:
+            # Learned: feed live with a synthetic position.
+            if crossed:
+                cand = dist_m - (self._fb_base_dist or dist_m)
+                cand_t = t - (self._fb_base_t or t)
+                if 40.0 <= cand_t <= 420.0 and cand >= 800.0:
+                    self._fb_cands.append(cand)
+                    self._fb_cands = self._fb_cands[-4:]
+                    med = sorted(self._fb_cands)[len(self._fb_cands) // 2]
+                    if abs(med - self._fb_len) / self._fb_len <= 0.03:
+                        self._fb_len = med
+                self._fb_base_dist = dist_m
+                self._fb_base_t = t
+                self._fb_lap_len = self._fb_len
+            elif self._fb_base_dist is None:
+                self._fb_base_dist = dist_m
+                self._fb_base_t = t
+                self._fb_lap_len = self._fb_len
+            elif (dist_m - self._fb_base_dist) > (self._fb_lap_len or 0) * 1.05:
+                # Missed the timer reset (a glitch): rebase on the
+                # odometer so position keeps its phase.
+                self._fb_base_dist += self._fb_lap_len
+            self._feed_at(t, self._fb_pos(dist_m), speed_kmh,
+                          kw["brake"], kw["gas"], dist_m, live=kw["live"],
+                          ict_ms=ict_ms, heading=kw["heading"],
+                          tyres_out=kw["tyres_out"], steer=kw["steer"],
+                          wheel_w=kw["wheel_w"], wheel_r=kw["wheel_r"],
+                          flag=kw["flag"], penalty_s=kw["penalty_s"])
+            return True
+        # Learning: buffer the frame; a timer reset closes a
+        # candidate lap.
+        self._fb_buf.append((t, speed_kmh, dist_m, ict_ms, kw))
+        if crossed:
+            cand_d = dist_m - (self._fb_base_dist
+                               if self._fb_base_dist is not None else dist_m)
+            cand_t = t - (self._fb_base_t
+                          if self._fb_base_t is not None else t)
+            if 40.0 <= cand_t <= 420.0 and cand_d >= 800.0:
+                self._fb_cands.append(cand_d)
+                learned = None
+                if self._fb_len is not None:
+                    if abs(cand_d - self._fb_len) / self._fb_len <= 0.03:
+                        learned = self._fb_len
+                    else:
+                        self._fb_len = None  # seed was wrong; pair afresh
+                elif len(self._fb_cands) >= 2:
+                    a, b = self._fb_cands[-2], self._fb_cands[-1]
+                    if abs(a - b) / max(a, b) <= 0.02:
+                        learned = (a + b) / 2.0
+                if learned is not None:
+                    self._fb_len = learned
+                    self._fb_flush()
+                    return True
+            self._fb_base_dist = dist_m
+            self._fb_base_t = t
+            if len(self._fb_buf) > 30000:  # ~3.5 laps at full rate; bound it
+                self._fb_buf = self._fb_buf[-15000:]
+        return True
+
+    def _fb_flush(self):
+        """Lap length is known: replay the buffered frames with
+        synthetic positions, segmented by the lap-timer resets inside
+        the buffer. Frames before the first reset are the tail of a
+        partial lap and are dropped (their official time is skipped
+        first, so pairing stays exact)."""
+        buf, self._fb_buf = self._fb_buf, None
+        for _ in range(self._fb_skip_officials):
+            if self.official_times:
+                self.official_times.pop(0)
+        self._fb_skip_officials = 0
+        print(f"[coach] lap length learned from the lap timer: "
+              f"{self._fb_len:.0f} m -- replaying the buffered laps")
+        try:
+            self.log("position_fallback_length",
+                     {"length_m": round(self._fb_len, 1)})
+        except Exception:
+            pass
+        try:
+            self.speaker.say("This track has no position feed, "
+                             "so I'm coaching by distance.")
+        except Exception:
+            pass
+        base = None
+        prev_ict = None
+        started = False
+        for (ft, spd, fdist, fict, kw) in buf:
+            if fict is not None:
+                if (prev_ict is not None and prev_ict > 20000
+                        and fict < prev_ict - 5000 and fict < 5000):
+                    base = fdist
+                    started = True
+                prev_ict = fict
+            if not started:
+                continue
+            p = (fdist - base) / self._fb_len
+            p = min(0.9999, max(0.0, p))
+            self._feed_at(ft, p, spd, kw["brake"], kw["gas"], fdist,
+                          live=kw["live"], ict_ms=fict, heading=kw["heading"],
+                          tyres_out=kw["tyres_out"], steer=kw["steer"],
+                          wheel_w=kw["wheel_w"], wheel_r=kw["wheel_r"],
+                          flag=kw["flag"], penalty_s=kw["penalty_s"])
+        if buf:
+            self._fb_base_dist = base if base is not None else buf[-1][2]
+            self._fb_base_t = buf[-1][0]
+            self._fb_lap_len = self._fb_len
+            self._fb_prev_ict = buf[-1][3]
+
+    def _feed_at(self, t, pos, speed_kmh, brake, gas, dist_m, live=True, ict_ms=None,
+                 heading=None, tyres_out=None, steer=None,
+                 wheel_w=None, wheel_r=None, flag=None, penalty_s=None):
+        # The coaching body, fed with an effective position (the
+        # spline value, or a synthetic one from the distance
+        # fallback). The NaN/live guards in feed() already ran; they
+        # are repeated here so direct callers stay safe.
+        if pos is None or speed_kmh is None or not (
+                math.isfinite(pos) and math.isfinite(speed_kmh)):
+            return
+        if not live:
+            return
         self._maybe_brief(t, speed_kmh, dist_m)
         if self.prev_pos is not None:
             wrapped = self.prev_pos > 0.85 and pos < 0.15 and speed_kmh > 30
@@ -2466,6 +2707,7 @@ class Coach:
                     and (t - self.lap_start_t) / pos > 1.15 * self.profile.best_lap_s):
                 pass  # this lap is far off the pace -- an out/in lap
             else:
+                self._service_tone_pending(t, pos)
                 self._maybe_brake_tone(t, pos)
                 self._maybe_approach_cue(t, pos)
                 self._maybe_guide_tip(t, pos)
@@ -2782,6 +3024,14 @@ class Coach:
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
         self._tone_fired = set()
+        if self._tone_pending is not None:
+            try:
+                self.log("tone_dropped_busy",
+                         {"num": self._tone_pending["num"],
+                          "reason": "lap_end"})
+            except Exception:
+                pass
+            self._tone_pending = None
         self._exit_spoken = 0
         self._live_losses = {}
 
@@ -2907,8 +3157,11 @@ class Coach:
         # the same out-lap / off-pace mute as the voice cues, fires
         # once per corner per lap, and only into an idle audio
         # channel -- a tone queued behind speech would land late and
-        # teach the wrong point, so a busy channel drops it for the
-        # lap (logged as tone_dropped_busy).
+        # teach the wrong point. v2.13.0: a busy channel no longer
+        # drops it outright; the tone is held and fired the moment
+        # the channel frees, within a short late window past the
+        # brake point (_service_tone_pending); only past that window
+        # is it dropped (logged as tone_dropped_busy).
         if not self.cfg.get("brake_tone", False):
             return
         cur_bin = int(pos * NBINS) % NBINS
@@ -2926,8 +3179,41 @@ class Coach:
                     self.log("tone", {"num": num,
                                       "name": c.get("name")})
                 else:
-                    self.log("tone_dropped_busy", {"num": num})
+                    # v2.13.0: hold it, don't drop it yet. Albert's
+                    # first live report was that the beeps coincided
+                    # with voice cues and vanished -- exactly the
+                    # busy-channel case. _service_tone_pending fires
+                    # it the moment the channel frees, while the car
+                    # is still close enough to the brake point for
+                    # the marker to mean the same thing; only past
+                    # that window is it dropped (and logged).
+                    self._tone_pending = {"num": num,
+                                          "name": c.get("name"),
+                                          "target": target, "t": t}
                 break
+
+    def _service_tone_pending(self, t, pos):
+        """v2.13.0: fire a brake tone that was held by a busy channel
+        as soon as the channel frees, provided the car is still
+        within brake_tone_late_m metres past the brake point (and
+        within 2 s of the crossing). Past the window it is dropped
+        and logged as tone_dropped_busy: a truly late tone teaches
+        the wrong brake point."""
+        p = self._tone_pending
+        if p is None or not self.profile:
+            return
+        cur_bin = int(pos * NBINS) % NBINS
+        late_m = ((cur_bin - p["target"]) % NBINS) * self.profile.bin_m
+        late_limit = float(self.cfg.get("brake_tone_late_m", 25))
+        if self.speaker.tone_ready() and late_m <= late_limit:
+            self.speaker.tone()
+            self.log("tone", {"num": p["num"], "name": p.get("name"),
+                              "delayed": True,
+                              "late_m": round(late_m, 1)})
+            self._tone_pending = None
+        elif late_m > late_limit or t - p["t"] > 2.0:
+            self.log("tone_dropped_busy", {"num": p["num"]})
+            self._tone_pending = None
 
     def _maybe_approach_cue(self, t, pos):
         if self.approach_cues_this_lap >= int(self.cfg["max_approach_cues_per_lap"]):

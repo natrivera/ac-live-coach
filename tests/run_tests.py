@@ -431,7 +431,8 @@ tcoach._maybe_brake_tone(12.0, 941 / m.NBINS)
 tcoach.speaker.busy = False
 tcoach._prev_bin = 941
 tcoach._maybe_brake_tone(12.1, 950 / m.NBINS)
-check("tone: busy channel drops it for the lap", tcoach.speaker.tones == 2)
+check("tone: busy channel does not fire at the crossing",
+      tcoach.speaker.tones == 2)
 tcoach.reset_next_approach_state()
 tcoach._prev_bin = 290
 tcoach._maybe_brake_tone(13.0, 301 / m.NBINS)
@@ -452,6 +453,86 @@ with _wave.open(io.BytesIO(_data), "rb") as _wf:
     check("tone: wav is 22050 Hz mono, ~150 ms",
           _wf.getframerate() == 22050 and _wf.getnchannels() == 1
           and 3000 < _wf.getnframes() < 3400)
+
+# ---- brake tone late window (v2.13.0) ----
+tcoach.reset_next_approach_state()
+tcoach.speaker.busy = True
+tcoach._prev_bin = 930
+tcoach._maybe_brake_tone(20.0, 941 / m.NBINS)
+check("tone: busy crossing is held, not dropped",
+      tcoach.speaker.tones == 2 and tcoach._tone_pending is not None)
+tcoach.speaker.busy = False
+tcoach._service_tone_pending(20.4, 945 / m.NBINS)  # 5 bins x 2.5 m = 12.5 m past
+check("tone: held tone fires when the channel frees inside the window",
+      tcoach.speaker.tones == 3 and tcoach._tone_pending is None)
+tcoach.reset_next_approach_state()
+tcoach.speaker.busy = True
+tcoach._prev_bin = 930
+tcoach._maybe_brake_tone(21.0, 941 / m.NBINS)
+tcoach.speaker.busy = False
+tcoach._service_tone_pending(21.4, 960 / m.NBINS)  # 20 bins x 2.5 m = 50 m past
+check("tone: held tone drops once past the late window",
+      tcoach.speaker.tones == 3 and tcoach._tone_pending is None)
+
+# ---- distance position fallback (v2.13.0) ----
+def drive_distance_session(coach, laps=5, lap_m=2900.0, dt=0.033):
+    """Synthetic spline-less session: raw position frozen at 0.0,
+    one braking dip per lap, the lap timer resetting at the line.
+    Pace works out to ~80.1 s per 2,900 m lap."""
+    t = 1000.0
+    dist = 0.0
+    lap_t0 = t
+    total = lap_m * laps
+    while dist < total:
+        s = dist % lap_m
+        if 1600.0 <= s <= 1850.0:
+            v = 75.0
+        else:
+            v = 140.0
+        if 1550.0 <= s < 1700.0:
+            b, g = 0.85, 0.0
+        elif 1600.0 <= s <= 1850.0:
+            b, g = 0.0, 0.3
+        else:
+            b, g = 0.0, 1.0
+        coach.feed(t, 0.0, v, b, g, dist, live=True,
+                   ict_ms=int((t - lap_t0) * 1000))
+        step = (v / 3.6) * dt
+        dist += step
+        t += dt
+        if dist % lap_m < s:
+            lap_t0 = t
+    coach.flush()
+
+dcoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+dprof = m.TrackProfile("dist__car")
+dcoach.set_profile(dprof)
+drive_distance_session(dcoach)
+check("fallback: dead spline latches distance mode",
+      dcoach._pos_src == "distance")
+check("fallback: lap length learned from the timer",
+      dcoach._fb_len is not None and abs(dcoach._fb_len - 2900.0) < 60.0,
+      f"len={dcoach._fb_len}")
+check("fallback: reference built from buffered laps", dprof.ref is not None)
+check("fallback: laps were counted", len(dcoach.lap_records) >= 2,
+      f"records={len(dcoach.lap_records)}")
+check("fallback: a later lap was fully analysed",
+      any(not r["out_lap"] for r in dcoach.lap_records))
+check("fallback: corners detected", len(dprof.corners) >= 1,
+      f"corners={len(dprof.corners)}")
+check("fallback: best lap near the synthetic pace",
+      dprof.best_lap_s is not None and abs(dprof.best_lap_s - 80.1) < 3.0,
+      f"best={dprof.best_lap_s}")
+
+scoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+sprof = m.TrackProfile("spline__car")
+scoach.set_profile(sprof)
+_t2 = 500.0
+for _i in range(300):
+    scoach.feed(_t2, (_i % 100) / 100.0, 120.0, 0.0, 1.0, _i * 4.0,
+                live=True, ict_ms=(_i * 33) % 90000)
+    _t2 += 0.033
+check("fallback: live spline stays spline mode", scoach._pos_src == "spline")
 
 print()
 if FAILS:
