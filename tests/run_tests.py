@@ -445,7 +445,16 @@ oprof.track_length_m = 5000.0
 oprof.corners = [{"num": 1, "brake_bin": 940, "has_brake_zone": True}]
 ocoach._prev_bin = 930
 ocoach._maybe_brake_tone(14.0, 941 / m.NBINS)
-check("tone: off by default", ocoach.speaker.tones == 0)
+check("tone: on by default since v2.14.1", ocoach.speaker.tones == 1)
+ocoach2 = m.Coach(dict(CFG, brake_tone=False), FakeSpeaker(),
+                  lambda *a, **k: None)
+oprof2 = m.TrackProfile("tone3__car")
+ocoach2.set_profile(oprof2)
+oprof2.track_length_m = 5000.0
+oprof2.corners = [{"num": 1, "brake_bin": 940, "has_brake_zone": True}]
+ocoach2._prev_bin = 930
+ocoach2._maybe_brake_tone(14.0, 941 / m.NBINS)
+check("tone: explicit off still silences it", ocoach2.speaker.tones == 0)
 import io
 import wave as _wave
 _data = m.Speaker._render_tone_wav(0.7)
