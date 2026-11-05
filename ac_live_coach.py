@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.16.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.16.2"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -3405,7 +3405,12 @@ class Coach:
         for _avg, num, latest in self._focus_corners():
             if num in self.approach_fired:
                 continue
-            corner = next(c for c in self.profile.corners if c["num"] == num)
+            # Same remap guard as the summary (v2.16.2): a focus
+            # corner from the pre-remap map may not exist anymore.
+            corner = next((c for c in self.profile.corners
+                           if c["num"] == num), None)
+            if corner is None:
+                continue
             trig = (corner["brake_bin"] - approach_bins) % NBINS
             since_trig_m = ((cur_bin - trig) % NBINS) * bin_m
             if since_trig_m > 430:
@@ -3780,7 +3785,17 @@ class Coach:
         best_rec = min(self.lap_records, key=lambda r: r["time_s"])
         gain = 0.0
         for num, lst in totals.items():
-            on_best = next(x["zone_time"] for x in best_rec["corners"] if x["num"] == num)
+            # v2.16.2: a mid-session remap (a much faster lap
+            # re-detects the corners -- Rainbow Road went 8 -> 9
+            # when lap 2 replaced the reference) leaves totals
+            # holding corner numbers the best lap's own record
+            # never had. The bare next() raised StopIteration,
+            # which killed build_report_html on every lap -- the
+            # coach ran fine and no report was ever written.
+            on_best = next((x["zone_time"] for x in best_rec["corners"]
+                            if x["num"] == num), None)
+            if on_best is None:
+                continue
             best_zone = min(x["zone_time"] for x in lst)
             gain += max(0.0, on_best - best_zone)
         if gain > 0.05:

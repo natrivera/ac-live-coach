@@ -167,6 +167,9 @@ say.
 
 ## Changelog
 
+### v2.16.2
+- **Fix: a mid-session corner remap killed every report.** When a much faster lap replaces the reference, the corners are re-detected — Rainbow Road went from 8 corners to 9 when lap 2 (1:40.3) replaced the 1:45.4 reference. The session summary's theoretical-best loop then asked the best lap's record for a corner number it never had and raised StopIteration, which `build_report_html` carried into every report write of the session (and the exit summary too): coaching ran perfectly, no report was ever produced. The loop now skips corners the best lap predates, the approach-cue lookup gets the same guard, and a distilled mixed-map test covers it. 89 checks.
+
 ### v2.16.1
 - **Fix: the v2.15.0 session rotation muted the coach.** Rotation rebound the coach's logger but not the Speaker's — the Speaker kept logging to the closed first session file, so every `say()` raised "I/O operation on closed file" and no speech survived (the driver's Streets of Willow session: 30 loop errors, no briefing, no cues). Rotation now rebinds the Speaker's logger as well, and speech logging is failure-proofed outright: a dead log target can never mute the coach again. 88 checks.
 

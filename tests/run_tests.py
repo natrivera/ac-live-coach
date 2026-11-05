@@ -699,6 +699,26 @@ check("talk 0: summary drops the leak line entirely",
       not any("Biggest leak" in ln for ln in _tc0.speaker.lines),
       f"got {_tc0.speaker.lines}")
 
+# ---- summary survives a mid-session remap (v2.16.2) ----
+# Rainbow Road, distilled: lap A analysed under an 8-corner map,
+# lap B under a 9-corner map (the reference replacement re-detected
+# the corners). The best lap's record has no corner 9; the
+# theoretical-best loop must skip it, not raise StopIteration and
+# take the whole report down with it.
+_mc = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+def _fake_lap(t, nums, loss, zt):
+    return {"time_s": t, "out_lap": False,
+            "corners": [dict(_res(), num=n, loss=loss, zone_time=zt)
+                        for n in nums]}
+_mc.lap_records = [_fake_lap(100.0, range(1, 9), 0.3, 10.0),
+                   _fake_lap(105.0, range(1, 10), 0.3, 9.0)]
+try:
+    _mlines = _mc.session_summary_lines()
+    _mok = any("Theoretical best" in ln for ln in _mlines)
+except Exception:
+    _mok = False
+check("summary: mixed corner maps across a remap don't crash it", _mok)
+
 # ---- a dead log target must never mute the coach (v2.16.1) ----
 def _boom(*a, **k):
     raise ValueError("I/O operation on closed file")
