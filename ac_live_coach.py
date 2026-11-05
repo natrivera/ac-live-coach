@@ -38,6 +38,7 @@ import json
 import math
 import os
 import queue
+import random
 import sys
 import threading
 import time
@@ -201,7 +202,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.13.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.14.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -239,6 +240,7 @@ DEFAULT_CONFIG = {
     "brake_tone_lead_m": 0,       # fire the tone this many metres before the brake point
     "brake_tone_late_m": 25,      # v2.13.0: a tone held by a busy channel may still fire up to this many metres past the point
     "position_fallback": True,    # v2.13.0: when a track reports no spline position, coach by distance (lap timer + odometer)
+    "sass_level": 0,              # v2.14.0: coach personality spectrum: 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharpest pools
 }
 
 
@@ -1390,9 +1392,26 @@ def _span_stats(lap_spd, lap_brk, lap_gas, lap_str, ref, z0, z1,
     if lt is not None and ref_throttle_bin is not None:
         throttle_delta_m = (lt - ref_throttle_bin) * bin_m  # positive = later to power
     coast_s = 0.0
+    coast_entry_s = 0.0
+    coast_exit_s = 0.0
     for i in range(z0, z1 + 1):
         if lap_brk[i] < 0.05 and lap_gas[i] < 0.05 and lap_spd[i] > 40:
-            coast_s += bin_m / max(lap_spd[i] / 3.6, 3.0)
+            c = bin_m / max(lap_spd[i] / 3.6, 3.0)
+            coast_s += c
+            # v2.14.0: WHERE the coast sits is the actual diagnosis --
+            # rolling to the apex (braking finished early / not
+            # trailed) and waiting after the apex (late back to
+            # power) are different faults with different fixes, and
+            # one shared 'less coasting' line was hiding both.
+            if i <= apex_bin:
+                coast_entry_s += c
+            else:
+                coast_exit_s += c
+    # Speed carried INTO the zone vs the reference: a deficit here
+    # was lost at the previous corner's exit, not in this zone.
+    _ew = slice(z0, min(z0 + 3, z1 + 1))
+    entry_delta_kmh = (sum(lap_spd[_ew]) / len(lap_spd[_ew])
+                       - sum(ref["spd"][_ew]) / len(ref["spd"][_ew]))
 
     def _brake_shape(brk, spd):
         """(peak pedal, release duration s) for one trace's braking
@@ -1435,6 +1454,9 @@ def _span_stats(lap_spd, lap_brk, lap_gas, lap_str, ref, z0, z1,
            "apex_delta_kmh": lap_apex_v - ref_apex_v,
            "throttle_delta_m": throttle_delta_m,
            "coast_s": coast_s,
+           "coast_entry_s": round(coast_entry_s, 2),
+           "coast_exit_s": round(coast_exit_s, 2),
+           "entry_delta_kmh": round(entry_delta_kmh, 1),
            "apex_shift_m": None, "mid_lift": False,
            "steer_rev_delta": None, "steer_work_ratio": None}
     if line:
@@ -1536,6 +1558,12 @@ def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
             if phs:
                 res["phases"] = phs
         results.append(res)
+    # v2.14.0: each corner learns its predecessor's name (the lap is
+    # a loop, so corner 1's predecessor is the last corner) -- an
+    # entry-speed deficit is the previous corner's exit talking.
+    if len(results) > 1:
+        for i, r in enumerate(results):
+            r["prev_name"] = results[i - 1]["name"]
     return results
 
 
@@ -1570,6 +1598,10 @@ def _symptom_costs(s):
     td = s.get("throttle_delta_m")
     if td is not None:
         costs["power"] = abs(td) / v_avg * 0.5
+    ed = s.get("entry_delta_kmh")
+    if ed is not None and ed < 0:
+        costs["entry"] = (abs(ed) / max(v_avg * 3.6, 20.0)
+                          * max(span_t, 0.0) * 0.5)
     for kind in ("apex_early", "apex_late", "lift", "hands"):
         costs[kind] = 0.15
     return costs
@@ -1590,8 +1622,36 @@ def _cue_candidates(s):
         out.append(("spin", f"{name}: wheelspin there \u2014 feed the power in, don't grab it", 0.4 + s["spin_s"]))
     if s.get("brake_delta_m") is not None and s["brake_delta_m"] <= -8:
         out.append(("brake", f"{name}: brake later", costs.get("brake", 0.1)))
+    # v2.14.0: coast is a location, not a diagnosis. The merged and
+    # split candidates below carry the coast's full cost (plus their
+    # partner symptom's), so when the data supports a specific story
+    # it outranks the generic line, which survives as the fallback
+    # for a coast spread evenly across the zone. Kinds reuse
+    # brake/coast/power so guide-tip tagging and priority biases
+    # keep working.
+    _bd = s.get("brake_delta_m")
+    _ce = s.get("coast_entry_s") or 0.0
+    _cx = s.get("coast_exit_s") or 0.0
+    _td = s.get("throttle_delta_m")
+    _entry_dom = _ce >= 0.5 and _ce >= 0.6 * max(s["coast_s"], 0.01)
+    if _entry_dom and _bd is not None and _bd <= -8:
+        out.append(("brake", f"{name}: you're done braking early and rolling to the apex \u2014 brake later, carry it in",
+                    costs.get("coast", 0.1) + costs.get("brake", 0.1)))
+    elif _entry_dom:
+        out.append(("coast", f"{name}: you're rolling to the apex off both pedals \u2014 trail the brake deeper",
+                    costs.get("coast", 0.1)))
+    if _td is not None and _td >= 10 and _cx >= 0.4:
+        out.append(("power", f"{name}: you're waiting to get back to power \u2014 pick it up at the apex",
+                    costs.get("coast", 0.1) + costs.get("power", 0.1)))
     if s["coast_s"] >= 0.5:
         out.append(("coast", f"{name}: less coasting, commit to a pedal", costs.get("coast", 0.1)))
+    _ed = s.get("entry_delta_kmh")
+    if _ed is not None and _ed <= -6:
+        _prev = s.get("prev_name")
+        _where = (f"that's {_prev}'s exit, not this corner" if _prev
+                  else "that was lost before this corner")
+        out.append(("entry", f"{name}: you're arriving slow \u2014 {_where}",
+                    costs.get("entry", 0.1)))
     if s.get("apex_shift_m") is not None and abs(s["apex_shift_m"]) >= 25:
         if s["apex_shift_m"] > 0:
             out.append(("apex_late", f"{name}: apex is late there \u2014 turn in earlier", costs.get("apex_late", 0.15)))
@@ -1906,6 +1966,9 @@ class Coach:
         self.approach_cues_this_lap = 0
         self._tone_fired = set()
         self._tone_pending = None      # v2.13.0: brake tone held for a busy channel
+        self._sass_rot = {}            # v2.14.0: sass pool rotation, per site
+        self._last_summary_leak = None  # v2.14.0: last summary's biggest leak (num)
+        self._exit_line_count = {}     # v2.14.0: exit lines spoken per corner, session
         self._exit_spoken = 0
         self.last_spoke_t = -1e9
         self.lap_number = 0
@@ -2322,11 +2385,32 @@ class Coach:
     # where the time is going. Segments are say()'d from feed()
     # when they fall due, never queued ahead, so the 15 s
     # stale-cue drop can't eat them.
-    BRIEFING_LOADED_A = "Out lap — I don't coach this one, and nothing on it counts."
+    # v2.14.0: the briefing's facts never change, so its frames are
+    # pools now -- the same wording every session read as mechanical
+    # (Albert). One line is drawn per session per site; sass level 2+
+    # adds a drier variant to each pool.
+    BRIEFING_LOADED_A = (
+        "Out lap — I don't coach this one, and nothing on it counts.",
+        "Out lap. This one's free — no coaching, nothing counts.",
+        "Warm-up lap — I stay quiet on this one, and nothing on it counts.")
+    BRIEFING_LOADED_A_SASS = (
+        "Out lap. I don't coach it, it doesn't count — enjoy the scenery.",)
     BRIEFING_FRESH_A = (
         "First lap in this car here sets your reference — every "
-        "later lap gets compared to it.")
+        "later lap gets compared to it.",
+        "New combo here — this lap becomes the reference everything "
+        "else is judged against.",
+        "First lap in this car at this track: it sets the reference, "
+        "so make it a clean one.")
+    BRIEFING_FRESH_A_SASS = (
+        "First lap here sets the reference. No pressure.",)
     BRIEF_OFFSETS_S = (0.0, 14.0)
+
+    def _vary(self, pool, sass_pool=None):
+        opts = list(pool)
+        if sass_pool and self._sass_level() >= 2:
+            opts += list(sass_pool)
+        return random.choice(opts)
 
     @staticmethod
     def _pretty_key_part(key, which):
@@ -2347,17 +2431,29 @@ class Coach:
         parts = []
         n = len(p.corners)
         if self._loaded_with_ref and p.best_lap_s:
-            parts.append(f"Your best here in this car is "
-                         f"{fmt_lap_spoken(p.best_lap_s)}.")
+            best = fmt_lap_spoken(p.best_lap_s)
+            parts.append(self._vary((
+                f"Your best here in this car is {best}.",
+                f"Best in this car here: {best}.",
+                f"You've done {best} in this car here.")))
             if n:
-                parts.append(f"{n} places mapped.")
+                parts.append(self._vary((
+                    f"{n} places mapped.",
+                    f"{n} corners on the map.",
+                    f"I've got {n} places mapped here.")))
         elif self.map_borrowed_from:
             src = self._pretty_key_part(self.map_borrowed_from, 1)
-            parts.append(f"Corner map borrowed from the {src}: "
-                         f"{n} places. This lap sets this car's reference.")
+            parts.append(self._vary((
+                f"Corner map borrowed from the {src}: "
+                f"{n} places. This lap sets this car's reference.",
+                f"I'm borrowing the {src} corner map — {n} places. "
+                f"This lap sets this car's own reference.")))
         else:
-            parts.append("No laps logged in this car here yet — "
-                         "this lap sets the reference.")
+            parts.append(self._vary((
+                "No laps logged in this car here yet — "
+                "this lap sets the reference.",
+                "Nothing logged in this car here yet. "
+                "This lap fixes that.")))
         leaks = []
         for num, hist in self.corner_history.items():
             clean = [r for r in hist if not r.get("off")]
@@ -2368,7 +2464,10 @@ class Coach:
         leaks.sort(key=lambda x: -x[0])
         if leaks:
             names = " and ".join(x[1] for x in leaks[:2])
-            parts.append(f"This session, your biggest leaks are {names}.")
+            parts.append(self._vary((
+                f"This session, your biggest leaks are {names}.",
+                f"So far today the time's going at {names}.",
+                f"Today's repeat offenders: {names}.")))
         elif self.history:
             # v2.1.0: nothing this session yet -- speak from the
             # cross-session record for this combo instead.
@@ -2382,8 +2481,13 @@ class Coach:
             sess = int(self.history.get("sessions", 0))
             if avgs and sess >= 1:
                 names = " and ".join(x[1] for x in avgs[:2])
-                parts.append(f"Over {sess} sessions in this car here, "
-                             f"your biggest leaks are {names}.")
+                parts.append(self._vary((
+                    f"Over {sess} sessions in this car here, "
+                    f"your biggest leaks are {names}.",
+                    f"Across {sess} sessions here, the usual "
+                    f"suspects are {names}.",
+                    f"History says the time goes at {names} — "
+                    f"{sess} sessions of it.")))
         return " ".join(parts)
 
     def _maybe_brief(self, t, speed_kmh, dist_m):
@@ -2407,7 +2511,10 @@ class Coach:
                 return
         self._briefed = True
         self._brief_t0 = t
-        a = self.BRIEFING_LOADED_A if self._loaded_with_ref else self.BRIEFING_FRESH_A
+        if self._loaded_with_ref:
+            a = self._vary(self.BRIEFING_LOADED_A, self.BRIEFING_LOADED_A_SASS)
+        else:
+            a = self._vary(self.BRIEFING_FRESH_A, self.BRIEFING_FRESH_A_SASS)
         stats = self._stats_line()
         segs = [a] + ([stats] if stats else [])
         self._brief_plan = list(zip(self.BRIEF_OFFSETS_S, segs))[1:]
@@ -3338,7 +3445,13 @@ class Coach:
                 if res.get("off"):
                     pass  # he was off the track in that zone -- no feedback, it was a save
                 elif res["loss"] >= min_loss:
-                    line = f"{c['name']}: lost {tenths_phrase(res['loss'])} there"
+                    if (self._sass_level() >= 2
+                            and self._exit_line_count.get(num, 0) >= 1):
+                        line = self._sass_pick(f"exit_again_{num}", [
+                            f"{c['name']} again: lost {tenths_phrase(res['loss'])} there",
+                            f"{c['name']}: lost {tenths_phrase(res['loss'])} there. Again."])
+                    else:
+                        line = f"{c['name']}: lost {tenths_phrase(res['loss'])} there"
                     # v2.6.0: say WHY, not just how much -- the live
                     # single-zone analysis already computed the causes
                     # and the old line threw them away until next
@@ -3353,9 +3466,19 @@ class Coach:
                     if fix and ": " in fix:
                         fix_text = fix.split(": ", 1)[1]
                 elif res["loss"] >= (0.20 if minor else 0.10) and res["coast_s"] >= 2.0:
-                    line = (f"{c['name']}: big coast there, costing "
+                    _ce = res.get("coast_entry_s") or 0.0
+                    _cx = res.get("coast_exit_s") or 0.0
+                    if _ce >= 0.6 * res["coast_s"]:
+                        _what = "big roll to the apex"
+                    elif _cx >= 0.6 * res["coast_s"]:
+                        _what = "slow back to power"
+                    else:
+                        _what = "big coast"
+                    line = (f"{c['name']}: {_what} there, costing "
                             f"{tenths_phrase(res['loss'])}")
                 if line:
+                    self._exit_line_count[num] = \
+                        self._exit_line_count.get(num, 0) + 1
                     if fix_text:
                         # v2.9.0: measurement [beat] instruction --
                         # spoken as two clauses with a spliced pause
@@ -3436,16 +3559,55 @@ class Coach:
                     self._optimal["brk"][b] = brk[b]
                 self._optimal["zone_times"][r["num"]] = r["zone_time"]
 
+    # -- sass (v2.14.0) ---------------------------------------------------
+    # A spectrum, not a switch (Albert's call): sass_level 0 is the
+    # pro voice he has always had; 1 gives lap summaries a dry
+    # variant pool; 2 adds repeat-offender and well-off-pace lines
+    # plus 'again' forms on exit feedback; 3 sharpens the pools.
+    # Sass only ever wraps the facts -- numbers and fixes are
+    # untouched -- and it never enters approach cues, which stay
+    # pure function at every level. Pools rotate per site so a line
+    # cannot repeat until its pool is used up.
+
+    def _sass_level(self):
+        try:
+            return int(self.cfg.get("sass_level", 0))
+        except Exception:
+            return 0
+
+    def _sass_pick(self, site, pool):
+        if not pool:
+            return None
+        i = self._sass_rot.get(site, 0)
+        self._sass_rot[site] = i + 1
+        return pool[i % len(pool)]
+
     def _speak_lap_summary(self, lap_time, results):
         p = self.profile
+        sass = self._sass_level()
         parts = [f"Lap {fmt_lap_spoken(lap_time)}."]
         if p and p.best_lap_s and abs(lap_time - p.best_lap_s) > 0.05:
             if lap_time > p.best_lap_s:
-                parts.append(f"{lap_time - p.best_lap_s:.1f} off your best.")
+                d = lap_time - p.best_lap_s
+                if sass >= 2 and d >= 2.0:
+                    parts.append(self._sass_pick("summary_slow", [
+                        f"{d:.1f} off your best.",
+                        f"{d:.1f} off your best — some sightseeing in that one."]))
+                else:
+                    parts.append(f"{d:.1f} off your best.")
             else:
-                parts.append("That's a new best.")
+                if sass >= 1:
+                    pool = ["That's a new best.",
+                            "New best. Frame it.",
+                            "New best — the reference just moved."]
+                    if sass >= 3:
+                        pool.append("New best. Don't let it go to your head.")
+                    parts.append(self._sass_pick("summary_pb", pool))
+                else:
+                    parts.append("That's a new best.")
         clean = [r for r in results if not r.get("off")]
         worst = max(clean, key=lambda r: r["loss"]) if clean else None
+        leak_spoken = False
         if worst and worst["loss"] >= float(self.cfg["min_loss_to_speak"]):
             brake_only = self.cfg.get("focus") == "brake"
             cue = corner_cue(
@@ -3456,8 +3618,20 @@ class Coach:
                 symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
             if cue:
                 parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(worst['loss'])}.")
+                leak_spoken = True
             elif brake_only:
                 parts.append(f"Biggest leak: {worst['name'].lower()}, costing {tenths_phrase(worst['loss'])}.")
+                leak_spoken = True
+        if (leak_spoken and sass >= 2
+                and worst.get("num") is not None
+                and worst.get("num") == self._last_summary_leak):
+            pool = ["Same corner as last lap.",
+                    "It was that corner last lap, too."]
+            if sass >= 3:
+                pool.append("We're naming a grandstand after that corner at this rate.")
+            parts.append(self._sass_pick("summary_repeat", pool))
+        if leak_spoken:
+            self._last_summary_leak = worst.get("num")
         offs = [r for r in results if r.get("off")]
         if offs:
             parts.append(f"Off track at {offs[0]['name']} — that one doesn't count.")
@@ -3465,6 +3639,12 @@ class Coach:
         if reps:
             parts.append(f"{reps[0]['name']}: wide there every lap — "
                          f"that's a pattern, not a save, so it counts now.")
+        if not leak_spoken and not offs and sass >= 1:
+            pool = ["Nothing to fix.",
+                    "Clean lap — nothing to fix."]
+            if sass >= 2:
+                pool.append("Nothing to fix. Suspicious, but I'll allow it.")
+            parts.append(self._sass_pick("summary_clean", pool))
         self.speaker.say(" ".join(parts))
 
     # -- debrief --------------------------------------------------------------

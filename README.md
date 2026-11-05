@@ -129,6 +129,13 @@ the numbers behind it, are in there.
 - `position_fallback` — when a track mod reports no spline
   position, derive position from the lap timer + odometer so
   coaching still works (default on)
+- `sass_level` — the coach's personality spectrum: 0 = pro
+  (default), 1 = lap summaries draw from dry variant pools,
+  2 = repeat-offender and well-off-pace lines join in and exit
+  feedback gets its "again" forms, 3 = the sharpest pool entries.
+  Sass never changes the numbers or the fixes, and never enters
+  approach cues. The out-lap briefing's phrasing rotates at every
+  level — same facts, varied frames
 - `voice_enabled` — false = console only
 
 ## Known limits
@@ -152,6 +159,12 @@ synthetic track with planted driving faults and prints what it would
 say.
 
 ## Changelog
+
+### v2.14.0
+- **Coast is a location, not a diagnosis:** the most-spoken fix used to be "less coasting, commit to a pedal" wherever it appeared, because raw coast time out-costed every other symptom. The zone analysis now splits coast at the apex (rolling in vs waiting after it), measures the speed carried into the zone, and knows each corner's predecessor — so the cues name the mechanism: braking done early + an entry roll becomes "you're done braking early and rolling to the apex — brake later, carry it in"; an exit coast with a late throttle point becomes "you're waiting to get back to power — pick it up at the apex"; an entry-speed deficit is called what it is — "you're arriving slow — that's the previous corner's exit, not this corner". The generic line survives for a coast spread evenly across a zone. Exit feedback's "big coast" line got the same split ("big roll to the apex" / "slow back to power"). Verified on the driver's real Laguna Seca laps, where Turn 6's summary now tells the braking story instead of the coasting one.
+- **Sass, as a spectrum:** `sass_level` 0–3 (default 0, the pro voice). Level 1 gives lap summaries rotating dry variant pools (new-best, clean-lap lines — no repeats until a pool is used up); level 2 adds repeat-offender callouts when the same corner tops consecutive summaries, a well-off-pace variant, and "again" forms on a corner's second exit line of the session; level 3 sharpens the pools. Sass wraps facts, never replaces them, and approach cues stay pure function at every level.
+- **Briefing variety:** the out-lap briefing's facts are fixed, so its phrasing now rotates per session — segment openers, the best/mapped/leaks frames — with a drier variant joining each pool at sass level 2+.
+- Tests grow to 81 checks, including the coast split, the three new cue stories, sass rotation/gating, and briefing pool membership.
 
 ### v2.13.0
 - **Distance position fallback:** some mod tracks ship no working AI spline, so AC reports the car's track position as a constant (the Rainbow Road conversion: 0.0 in every frame of a six-lap session — no laps registered, no reference, no cues). The coach now detects a dead spline (position never varies over 200 m of travel) and derives position from the game's own lap timer segmented over the odometer, normalised by a lap length learned from two consecutive laps that agree within 2% (a saved profile length validates against a single lap). Frames are buffered while the length is learned, then replayed through the normal pipeline, so bins, zones, cues, tones and the report all work unchanged; the coach says once that it is coaching by distance. Verified by replaying the real Rainbow Road session: length learned 2,902 m, reference and 11 corners built, laps and tones reconstructed. New knob: `position_fallback` (default on).

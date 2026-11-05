@@ -534,6 +534,118 @@ for _i in range(300):
     _t2 += 0.033
 check("fallback: live spline stays spline mode", scoach._pos_src == "spline")
 
+# ---- coast split + specific cue wording (v2.14.0) ----
+_n = m.NBINS
+_ref = {"spd": [150.0] * _n, "brk": [0.0] * _n, "gas": [1.0] * _n}
+_lap_spd = [150.0] * _n
+_lap_brk = [0.0] * _n
+_lap_gas = [1.0] * _n
+for _j in range(120, 141):
+    _lap_brk[_j] = 0.9          # lap brakes at bin 120, ref at 150
+for _j in range(141, 210):
+    _lap_gas[_j] = 0.0          # then rolls, mostly before the apex
+_st = m._span_stats(_lap_spd, _lap_brk, _lap_gas, None, _ref,
+                    100, 300, 200, 150, 210, 150.0, 2.5)
+check("span: coast split puts the roll before the apex",
+      _st["coast_entry_s"] > 2.0 and _st["coast_entry_s"] > _st["coast_exit_s"],
+      f"entry={_st['coast_entry_s']} exit={_st['coast_exit_s']}")
+check("span: brake delta is early by 75 m", _st["brake_delta_m"] == -75.0)
+_lap_spd2 = list(_lap_spd)
+for _j in range(100, 103):
+    _lap_spd2[_j] = 130.0
+_st2 = m._span_stats(_lap_spd2, _lap_brk, _lap_gas, None, _ref,
+                     100, 300, 200, 150, 210, 150.0, 2.5)
+check("span: entry speed deficit measured", _st2["entry_delta_kmh"] < -15.0,
+      f"entry={_st2['entry_delta_kmh']}")
+
+def _res(**kw):
+    base = {"name": "Turn 6", "num": 6, "off": False, "loss": 0.5,
+            "coast_s": 0.0, "coast_entry_s": 0.0, "coast_exit_s": 0.0,
+            "brake_delta_m": None, "throttle_delta_m": None,
+            "apex_delta_kmh": 0.0, "entry_delta_kmh": 0.0,
+            "prev_name": "Turn 5", "ref_zone_time": 12.0,
+            "zone_time": 12.5, "span_m": 500.0}
+    base.update(kw)
+    return base
+
+_c1 = m.corner_cue(_res(coast_s=3.0, coast_entry_s=2.7, coast_exit_s=0.3,
+                        brake_delta_m=-30.0))
+check("cue: early brake + entry roll names both",
+      _c1 is not None and "rolling to the apex" in _c1
+      and "brake later, carry it in" in _c1, f"got {_c1}")
+_c2 = m.corner_cue(_res(coast_s=2.0, coast_entry_s=0.2, coast_exit_s=1.8,
+                        throttle_delta_m=40.0))
+check("cue: exit coast + late throttle is a power line",
+      _c2 is not None and "waiting to get back to power" in _c2,
+      f"got {_c2}")
+_c3 = m.corner_cue(_res(entry_delta_kmh=-12.0))
+check("cue: entry deficit blames the previous exit",
+      _c3 is not None and "arriving slow" in _c3
+      and "Turn 5's exit" in _c3, f"got {_c3}")
+_c4 = m.corner_cue(_res(coast_s=2.0, coast_entry_s=1.0, coast_exit_s=1.0))
+check("cue: evenly spread coast keeps the generic line",
+      _c4 is not None and "less coasting, commit to a pedal" in _c4,
+      f"got {_c4}")
+
+# ---- sass spectrum (v2.14.0) ----
+def _summary_coach(level):
+    c = m.Coach(dict(CFG, sass_level=level), FakeSpeaker(),
+                lambda *a, **k: None)
+    pr = m.TrackProfile(f"sass{level}__car")
+    c.set_profile(pr)
+    pr.best_lap_s = 100.0
+    return c
+
+_sc0 = _summary_coach(0)
+_sc0._speak_lap_summary(99.0, [])
+check("sass 0: PB line is the classic wording",
+      any("That's a new best." in ln for ln in _sc0.speaker.lines)
+      and not any("Frame it" in ln for ln in _sc0.speaker.lines))
+_sc1 = _summary_coach(1)
+for _ in range(3):
+    _sc1._speak_lap_summary(99.0, [])
+_pb_clauses = set()
+for ln in _sc1.speaker.lines:
+    for cand in ("That's a new best.", "New best. Frame it.",
+                 "New best — the reference just moved."):
+        if cand in ln:
+            _pb_clauses.add(cand)
+check("sass 1: PB pool rotates without repeating",
+      len(_pb_clauses) == 3, f"got {_pb_clauses}")
+_sc2 = _summary_coach(2)
+_worst = [_res(coast_s=2.0, coast_entry_s=1.0, coast_exit_s=1.0)]
+_sc2._speak_lap_summary(101.0, _worst)
+_sc2._speak_lap_summary(101.5, _worst)
+check("sass 2: repeat leak is called out on the second lap",
+      "Same corner as last lap." in _sc2.speaker.lines[-1]
+      and "Same corner as last lap." not in _sc2.speaker.lines[-2])
+_sc1b = _summary_coach(1)
+_sc1b._speak_lap_summary(105.0, [])
+check("sass 1: clean lap gets the dry closer",
+      any("Nothing to fix." in ln for ln in _sc1b.speaker.lines))
+
+# ---- briefing variety (v2.14.0) ----
+_bcoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+_bprof = m.TrackProfile("brief__car")
+_bcoach.set_profile(_bprof)
+_bprof.best_lap_s = 100.0
+_bprof.track_length_m = 3000.0
+_bprof.corners = [{"num": i} for i in range(1, 9)]
+_bcoach._loaded_with_ref = True
+_bcoach._maybe_brief(1000.0, 100.0, 0.0)
+_bcoach._maybe_brief(1001.0, 100.0, 950.0)
+check("briefing: opener comes from the loaded pool",
+      len(_bcoach.speaker.lines) >= 1
+      and _bcoach.speaker.lines[0] in m.Coach.BRIEFING_LOADED_A,
+      f"got {_bcoach.speaker.lines[:1]}")
+_bcoach._maybe_brief(1016.0, 100.0, 1200.0)
+check("briefing: stats line follows with a varied frame",
+      len(_bcoach.speaker.lines) >= 2
+      and any(k in _bcoach.speaker.lines[1]
+              for k in ("places mapped", "corners on the map",
+                        "places mapped here")),
+      f"got {_bcoach.speaker.lines[1:2]}")
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
