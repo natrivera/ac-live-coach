@@ -167,6 +167,9 @@ say.
 
 ## Changelog
 
+### v2.16.3
+- **Fix: discarded laps no longer re-arm the talk budget, and slow feeds no longer starve lap coverage.** Rainbow Road postscript: after lap 3 the frame feed stepped down from ~29 Hz to ~18–20 Hz (cause laptop/game-side, still unknown — it is not the speech; busy-speech windows ran full rate and speech is on its own thread). Each frame filled exactly one position bin, so at that rate whole laps fell under the 90 % coverage bar and were discarded — seven full laps — while the per-lap state reset ran before the validity check, re-arming the exit-feedback budget every time: an endless chatty "lap 4" with nothing recording. Two fixes: (1) lap bins now fill the short forward arc between consecutive frames (long jumps — teleports, resets — are never filled), so a slow feed still covers the lap; (2) the exit-feedback budget resets only when a lap counts, while tones and approach cues still re-arm every lap. Replay of the session: all 9 laps count, best improves to 1:36.7 from a formerly discarded lap, 41 spoken lines total; Buttonwillow replay is unchanged (7 laps, 2:03.6). 95 checks.
+
 ### v2.16.2
 - **Fix: a mid-session corner remap killed every report.** When a much faster lap replaces the reference, the corners are re-detected — Rainbow Road went from 8 corners to 9 when lap 2 (1:40.3) replaced the 1:45.4 reference. The session summary's theoretical-best loop then asked the best lap's record for a corner number it never had and raised StopIteration, which `build_report_html` carried into every report write of the session (and the exit summary too): coaching ran perfectly, no report was ever produced. The loop now skips corners the best lap predates, the approach-cue lookup gets the same guard, and a distilled mixed-map test covers it. 89 checks.
 

@@ -699,6 +699,33 @@ check("talk 0: summary drops the leak line entirely",
       not any("Biggest leak" in ln for ln in _tc0.speaker.lines),
       f"got {_tc0.speaker.lines}")
 
+# ---- bin interpolation rescues slow feeds (v2.16.3) ----
+_lb = m.LapBins()
+_lb.add(0.1000, 100.0, 0.0, 0.5)   # bin 200
+_lb.add(0.1030, 100.0, 0.0, 0.5)   # bin 206 -- 19 Hz on a fast section
+check("bins: skipped bins between frames get filled",
+      _lb.spd_cnt[203] > 0 and abs(_lb.coverage() - 7 / 2000) < 1e-9)
+_lb.add(0.5000, 100.0, 0.0, 0.5)   # teleport: 794-bin jump
+check("bins: teleport jumps are never filled", _lb.spd_cnt[500] == 0)
+_lb2 = m.LapBins()
+_lb2.add(0.9995, 90.0, 0.0, 0.4)   # bin 1999
+_lb2.add(0.0010, 90.0, 0.0, 0.4)   # bin 2, across the wrap
+check("bins: interpolation crosses the start/finish wrap",
+      _lb2.spd_cnt[0] > 0 and _lb2.spd_cnt[1] > 0)
+
+# ---- split reset: budget waits for a valid lap (v2.16.3) ----
+_rc = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+_rc._exit_spoken = 2
+_rc._tone_fired = {3}
+_rc.reset_next_approach_state(reset_exit_budget=False)
+check("reset: discarded lap keeps the spent exit budget",
+      _rc._exit_spoken == 2)
+check("reset: tones still re-arm on a discarded lap",
+      _rc._tone_fired == set())
+_rc.reset_next_approach_state()
+check("reset: a valid lap restores the exit budget",
+      _rc._exit_spoken == 0)
+
 # ---- summary survives a mid-session remap (v2.16.2) ----
 # Rainbow Road, distilled: lap A analysed under an 8-corner map,
 # lap B under a 9-corner map (the reference replacement re-detected

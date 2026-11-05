@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.16.2"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.16.3"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -1293,9 +1293,9 @@ class LapBins:
         self.hdg_cnt = [0] * NBINS
         self.str_sum = [0.0] * NBINS
         self.str_cnt = [0] * NBINS
+        self._last_bin = None
 
-    def add(self, pos, speed_kmh, brake, gas, heading=None, steer=None):
-        b = int(pos * NBINS) % NBINS
+    def _fill(self, b, speed_kmh, brake, gas, heading, steer):
         self.spd_sum[b] += speed_kmh
         self.spd_cnt[b] += 1
         if brake > self.brk_max[b]:
@@ -1308,6 +1308,27 @@ class LapBins:
         if steer is not None:
             self.str_sum[b] += steer
             self.str_cnt[b] += 1
+
+    def add(self, pos, speed_kmh, brake, gas, heading=None, steer=None):
+        b = int(pos * NBINS) % NBINS
+        # v2.16.3: fill the bins a slow frame rate skips. Each
+        # frame used to fill exactly one bin; when the feed drops
+        # (~19 Hz on Rainbow Road, ~6 Hz in stutters) the car
+        # covers several bins per frame on fast sections and the
+        # skipped bins stay empty -- lap coverage starves and
+        # whole laps fail the validity bar through no driving
+        # fault. Fill the short forward arc from the previous
+        # frame's bin with this frame's sample. Long jumps
+        # (teleports, resets, a refined fallback length rescaling
+        # positions) are not motion and are never filled.
+        if self._last_bin is not None:
+            steps = (b - self._last_bin) % NBINS
+            if 1 < steps <= 64:
+                for k in range(1, steps):
+                    self._fill((self._last_bin + k) % NBINS,
+                               speed_kmh, brake, gas, heading, steer)
+        self._fill(b, speed_kmh, brake, gas, heading, steer)
+        self._last_bin = b
 
     def coverage(self):
         filled = sum(1 for c in self.spd_cnt if c > 0)
@@ -2933,8 +2954,15 @@ class Coach:
         if self.prev_dist is not None and self.lap_start_dist is not None:
             dist = self.prev_dist - self.lap_start_dist
         coverage = self.bins.coverage()
-        self.reset_next_approach_state()
         valid = coverage >= 0.90 and (40 <= dur <= 420) and self.lap_valid_time
+        # v2.16.3: the exit-feedback budget resets only when the
+        # lap counts. Resetting it for discarded laps re-armed the
+        # budget every lap on Rainbow Road -- seven discarded laps
+        # produced an endless "lap 4" of exit lines while no lap
+        # ever recorded. Tones and approach state still re-arm on
+        # every lap (they live in reset_next_approach_state); the
+        # budget is the one deliberate exception.
+        self.reset_next_approach_state(reset_exit_budget=valid)
         if not valid:
             print(f"[lap] discarded (coverage {coverage:.0%}, duration {dur:.0f}s)")
         # The lap that just STARTED follows a pit stop or a reset if
@@ -3193,7 +3221,7 @@ class Coach:
                     print(f"[coach] new reference lap: {fmt_lap(lap_time)}")
                     self.log("reference_updated", {"lap_s": lap_time})
 
-    def reset_next_approach_state(self):
+    def reset_next_approach_state(self, reset_exit_budget=True):
         self.approach_fired = set()
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
@@ -3206,7 +3234,11 @@ class Coach:
             except Exception:
                 pass
             self._tone_pending = None
-        self._exit_spoken = 0
+        # v2.16.3: _finish_lap passes reset_exit_budget=False for
+        # a discarded lap, so a run of invalid laps cannot keep
+        # re-arming the exit-feedback budget (the endless lap 4).
+        if reset_exit_budget:
+            self._exit_spoken = 0
         self._live_losses = {}
 
     # -- section feedback (v2.1.0) ------------------------------------
