@@ -699,6 +699,22 @@ check("talk 0: summary drops the leak line entirely",
       not any("Biggest leak" in ln for ln in _tc0.speaker.lines),
       f"got {_tc0.speaker.lines}")
 
+# ---- a dead log target must never mute the coach (v2.16.1) ----
+def _boom(*a, **k):
+    raise ValueError("I/O operation on closed file")
+_spk2 = object.__new__(m.Speaker)
+_spk2.q = _queue.Queue()
+_spk2.log = _boom
+_spk2.enabled = True
+try:
+    _spk2.say("Turn 6: brake later", kind="cue")
+    _spk2.say_clauses("Turn 4: lost 4 tenths there", "brake later")
+    _muted = False
+except Exception:
+    _muted = True
+check("speaker: speech still enqueues when logging raises",
+      not _muted and _spk2.q.qsize() == 2)
+
 # ---- briefing variety (v2.14.0) ----
 _bcoach = m.Coach(dict(CFG, sass_level=0), FakeSpeaker(),
                   lambda *a, **k: None)

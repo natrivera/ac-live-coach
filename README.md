@@ -167,6 +167,9 @@ say.
 
 ## Changelog
 
+### v2.16.1
+- **Fix: the v2.15.0 session rotation muted the coach.** Rotation rebound the coach's logger but not the Speaker's — the Speaker kept logging to the closed first session file, so every `say()` raised "I/O operation on closed file" and no speech survived (the driver's Streets of Willow session: 30 loop errors, no briefing, no cues). Rotation now rebinds the Speaker's logger as well, and speech logging is failure-proofed outright: a dead log target can never mute the coach again. 88 checks.
+
 ### v2.16.0
 - **Stepped back: `talk_level` (default 1, reduced).** The first full-sass Buttonwillow session ran ~6 speeches a lap plus summaries, and the serial voice channel backed up behind them: approach cues went stale in the queue and 25 of 43 brake tones expired while the coach was mid-sentence — the talking was delaying the coaching. Verbosity is now a level: full (2) restores the old volume; reduced (1, default) caps exit feedback at 2 per lap and approach cues at 4, drops section colour, and silences sass (it speaks only at full level); essentials (0) trims further, to lap-time-only summaries. The analysis is untouched — same cues chosen, fewer of them read out.
 - **Approach cues now jump the queue.** Speech is tagged by kind; when a time-critical approach cue is enqueued, any queued-but-unstarted info lines (summaries, exit feedback) are dropped and logged (`cue_dropped_purged`) instead of making the cue wait. A line already speaking is never interrupted, and brake tones keep their own path — but with the channel stepped back, both should stop expiring.

@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.16.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.16.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -894,7 +894,12 @@ class Speaker:
                 pass
 
     def say(self, text, kind="info"):
-        self.log("cue", {"text": text})
+        # v2.16.1: logging is diagnostics; it must never be able to
+        # mute the coach. A dead log target prints and carries on.
+        try:
+            self.log("cue", {"text": text})
+        except Exception:
+            pass
         print(f"  >> COACH: {text}")
         if self.enabled:
             if kind == "cue":
@@ -907,7 +912,10 @@ class Speaker:
         instruction, instead of one welded sentence. The session log
         keeps the familiar single-line 'a -- b' form."""
         text = f"{a} -- {b}"
-        self.log("cue", {"text": text})
+        try:
+            self.log("cue", {"text": text})
+        except Exception:
+            pass
         print(f"  >> COACH: {text}")
         if self.enabled:
             self.q.put((time.time(), text, (a, b, int(gap_ms)), "info"))
@@ -4305,6 +4313,13 @@ def run_live(cfg):
                                 pass
                             log, txt_path, jsonl_path, tf, jf = make_logger()
                             coach.log = log
+                            # v2.16.1: the Speaker holds the logger
+                            # too -- leaving it on the closed first
+                            # file made every say() raise 'I/O
+                            # operation on closed file' and muted
+                            # the coach for the whole session
+                            # (Albert's Nov 4 Streets session).
+                            speaker.log = log
                             report_path = os.path.join(
                                 os.path.dirname(txt_path),
                                 os.path.basename(txt_path).replace(
