@@ -40,6 +40,7 @@ import os
 import queue
 import random
 import sys
+from collections import deque
 import threading
 import time
 import webbrowser
@@ -202,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.15.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.16.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -241,6 +242,7 @@ DEFAULT_CONFIG = {
     "brake_tone_late_m": 25,      # v2.13.0: a tone held by a busy channel may still fire up to this many metres past the point
     "position_fallback": True,    # v2.13.0: when a track reports no spline position, coach by distance (lap timer + odometer)
     "sass_level": 3,              # v2.14.0: coach personality spectrum: 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharpest pools (default 3 since v2.14.1, Albert's call)
+    "talk_level": 1,              # v2.16.0: how much the coach talks: 2 = full, 1 = reduced (default), 0 = essentials only
 }
 
 
@@ -836,7 +838,7 @@ class Speaker:
             item = self.q.get()
             if item is None:
                 break
-            ts, text, clauses = item
+            ts, text, clauses, _kind = item
             if clauses and clauses[0] == "__tone__":
                 # A brake tone is only true at its moment: played
                 # within ~1.5 s of the brake point or not at all --
@@ -870,11 +872,34 @@ class Speaker:
                 pass
             self._speaking = False
 
-    def say(self, text):
+    def _purge_info(self):
+        """Drop queued info lines (v2.16.0): a time-critical cue
+        must not wait behind colour that hasn't started yet --
+        summaries and exit lines are nice to have, an approach cue
+        is only true NOW. Dropped lines are logged, never spoken
+        late. The line currently speaking is not interrupted."""
+        dropped = []
+        with self.q.mutex:
+            kept = deque()
+            for item in self.q.queue:
+                if item[3] == "info":
+                    dropped.append(item)
+                else:
+                    kept.append(item)
+            self.q.queue = kept
+        for item in dropped:
+            try:
+                self.log("cue_dropped_purged", {"text": item[1]})
+            except Exception:
+                pass
+
+    def say(self, text, kind="info"):
         self.log("cue", {"text": text})
         print(f"  >> COACH: {text}")
         if self.enabled:
-            self.q.put((time.time(), text, None))
+            if kind == "cue":
+                self._purge_info()
+            self.q.put((time.time(), text, None, kind))
 
     def say_clauses(self, a, b, gap_ms=220):
         """Speak two clauses with a real beat of silence between
@@ -885,7 +910,7 @@ class Speaker:
         self.log("cue", {"text": text})
         print(f"  >> COACH: {text}")
         if self.enabled:
-            self.q.put((time.time(), text, (a, b, int(gap_ms))))
+            self.q.put((time.time(), text, (a, b, int(gap_ms)), "info"))
 
     # -- brake tone (v2.12.0) ------------------------------------------
 
@@ -898,7 +923,7 @@ class Speaker:
 
     def tone(self):
         if self.enabled:
-            self.q.put((time.time(), "", ("__tone__",)))
+            self.q.put((time.time(), "", ("__tone__",), "tone"))
 
     @staticmethod
     def _render_tone_wav(volume):
@@ -2411,7 +2436,7 @@ class Coach:
 
     def _vary(self, pool, sass_pool=None):
         opts = list(pool)
-        if sass_pool and self._sass_level() >= 2:
+        if sass_pool and self._sass_eff() >= 2:
             opts += list(sass_pool)
         return random.choice(opts)
 
@@ -3357,7 +3382,12 @@ class Coach:
             self._tone_pending = None
 
     def _maybe_approach_cue(self, t, pos):
-        if self.approach_cues_this_lap >= int(self.cfg["max_approach_cues_per_lap"]):
+        _cap = int(self.cfg["max_approach_cues_per_lap"])
+        if self._talk_level() == 1:
+            _cap = min(_cap, 4)
+        elif self._talk_level() == 0:
+            _cap = min(_cap, 3)
+        if self.approach_cues_this_lap >= _cap:
             return
         if not self._cooldown_ok(t):
             return
@@ -3400,7 +3430,7 @@ class Coach:
                     self.approach_fired.add(num)
                     self.log("cue_suppressed", {"num": num, "reason": "repeat"})
                 else:
-                    self.speaker.say(cue)
+                    self.speaker.say(cue, kind="cue")
                     self.last_spoke_t = t
                     self.approach_fired.add(num)
                     self.approach_cues_this_lap += 1
@@ -3435,14 +3465,18 @@ class Coach:
             delta = (cur_bin - trig) % NBINS
             if delta <= max(6, int(25.0 / bin_m)) and not self._in_any_zone(cur_bin):
                 name = c.get("name") or f"Turn {num}"
-                self.speaker.say(f"{name}: {tip_text(tips[0])}")
+                self.speaker.say(f"{name}: {tip_text(tips[0])}", kind="cue")
                 self.last_spoke_t = t
                 self._guide_tipped.add(num)
                 break
 
     def _maybe_exit_feedback(self, t, pos):
-        if self._exit_spoken >= 3:
-            return  # v2.0: finer map, same voice budget -- cap exit callouts per lap
+        # Exit callouts per lap by talk level (v2.16.0): 3 full,
+        # 2 reduced (default), 1 essentials.
+        _cap = (3 if self._talk_level() >= 2
+                else 2 if self._talk_level() == 1 else 1)
+        if self._exit_spoken >= _cap:
+            return
         if not self._cooldown_ok(t):
             return
         cur_bin = int(pos * NBINS) % NBINS
@@ -3479,7 +3513,7 @@ class Coach:
                 if res.get("off"):
                     pass  # he was off the track in that zone -- no feedback, it was a save
                 elif res["loss"] >= min_loss:
-                    if (self._sass_level() >= 2
+                    if (self._sass_eff() >= 2
                             and self._exit_line_count.get(num, 0) >= 1):
                         line = self._sass_pick(f"exit_again_{num}", [
                             f"{c['name']} again: lost {tenths_phrase(res['loss'])} there",
@@ -3528,7 +3562,9 @@ class Coach:
                     self.last_spoke_t = t
                     self._exit_spoken += 1
                 else:
-                    sline = self._maybe_section_line(num)
+                    # Section colour is full-talk only (v2.16.0).
+                    sline = (self._maybe_section_line(num)
+                             if self._talk_level() >= 2 else None)
                     if sline:
                         self.speaker.say(sline)
                         self.last_spoke_t = t
@@ -3609,6 +3645,24 @@ class Coach:
         except Exception:
             return 0
 
+    def _talk_level(self):
+        """How much the coach talks (v2.16.0): 2 = full, 1 = reduced
+        (default), 0 = essentials. Albert's Nov 4 Buttonwillow
+        session ran ~6 speeches a lap plus summaries, and the serial
+        voice channel backed up behind them -- approach cues went
+        stale in the queue and held brake tones expired. Stepping
+        the volume back is what frees the channel for the lines
+        that are only true NOW."""
+        try:
+            return max(0, min(2, int(self.cfg.get("talk_level", 1))))
+        except Exception:
+            return 1
+
+    def _sass_eff(self):
+        """Sass speaks only at full talk level: when the talking is
+        stepped back, the colour is the first thing to go."""
+        return self._sass_level() if self._talk_level() >= 2 else 0
+
     def _sass_pick(self, site, pool):
         if not pool:
             return None
@@ -3618,7 +3672,7 @@ class Coach:
 
     def _speak_lap_summary(self, lap_time, results):
         p = self.profile
-        sass = self._sass_level()
+        sass = self._sass_eff()
         parts = [f"Lap {fmt_lap_spoken(lap_time)}."]
         if p and p.best_lap_s and abs(lap_time - p.best_lap_s) > 0.05:
             if lap_time > p.best_lap_s:
@@ -3642,7 +3696,8 @@ class Coach:
         clean = [r for r in results if not r.get("off")]
         worst = max(clean, key=lambda r: r["loss"]) if clean else None
         leak_spoken = False
-        if worst and worst["loss"] >= float(self.cfg["min_loss_to_speak"]):
+        if (worst and worst["loss"] >= float(self.cfg["min_loss_to_speak"])
+                and self._talk_level() >= 1):
             brake_only = self.cfg.get("focus") == "brake"
             cue = corner_cue(
                 worst, brake_only=brake_only,

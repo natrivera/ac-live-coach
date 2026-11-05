@@ -129,6 +129,12 @@ the numbers behind it, are in there.
 - `position_fallback` — when a track mod reports no spline
   position, derive position from the lap timer + odometer so
   coaching still works (default on)
+- `talk_level` — how much the coach talks: 2 = full (exit
+  feedback ×3/lap, section lines, sass colour), 1 = reduced
+  (default: exit ×2, approach cues ×4, no section lines, sass
+  silent), 0 = essentials (approach ×3, exit ×1, summaries carry
+  the lap time only). Stepping back is what keeps the voice
+  channel free for the lines that are only true at one moment
 - `sass_level` — the coach's personality spectrum: 0 = pro,
   1 = lap summaries draw from dry variant pools,
   2 = repeat-offender and well-off-pace lines join in and exit
@@ -160,6 +166,11 @@ synthetic track with planted driving faults and prints what it would
 say.
 
 ## Changelog
+
+### v2.16.0
+- **Stepped back: `talk_level` (default 1, reduced).** The first full-sass Buttonwillow session ran ~6 speeches a lap plus summaries, and the serial voice channel backed up behind them: approach cues went stale in the queue and 25 of 43 brake tones expired while the coach was mid-sentence — the talking was delaying the coaching. Verbosity is now a level: full (2) restores the old volume; reduced (1, default) caps exit feedback at 2 per lap and approach cues at 4, drops section colour, and silences sass (it speaks only at full level); essentials (0) trims further, to lap-time-only summaries. The analysis is untouched — same cues chosen, fewer of them read out.
+- **Approach cues now jump the queue.** Speech is tagged by kind; when a time-critical approach cue is enqueued, any queued-but-unstarted info lines (summaries, exit feedback) are dropped and logged (`cue_dropped_purged`) instead of making the cue wait. A line already speaking is never interrupted, and brake tones keep their own path — but with the channel stepped back, both should stop expiring.
+- Tests grow to 87 checks, including the queue purge and the talk-level/sass gating.
 
 ### v2.15.0
 - **Distance fallback: the learner now anchors to the lap's actual start.** It measured its first candidate lap from the moment the dead-spline verdict landed — typically a few hundred metres into the lap — so that candidate came out short (2,270 m against a true 2,870 m lap on the driver's Rainbow Road return) and could never agree with the next lap; learning silently never completed, so no laps, cues or brake tones armed. The coach now tracks where the current lap began before the verdict (a timer reset, or the stream opening at a lap start) and measures candidates reset-to-reset. Verified against the real session file: length learned 2,894 m, reference built from his 1:38.2 lap, eight corners mapped — where v2.14.1 produced nothing.

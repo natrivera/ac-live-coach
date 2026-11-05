@@ -632,7 +632,7 @@ check("cue: evenly spread coast keeps the generic line",
 
 # ---- sass spectrum (v2.14.0) ----
 def _summary_coach(level):
-    c = m.Coach(dict(CFG, sass_level=level), FakeSpeaker(),
+    c = m.Coach(dict(CFG, sass_level=level, talk_level=2), FakeSpeaker(),
                 lambda *a, **k: None)
     pr = m.TrackProfile(f"sass{level}__car")
     c.set_profile(pr)
@@ -666,6 +666,38 @@ _sc1b = _summary_coach(1)
 _sc1b._speak_lap_summary(105.0, [])
 check("sass 1: clean lap gets the dry closer",
       any("Nothing to fix." in ln for ln in _sc1b.speaker.lines))
+
+# ---- talk level + cue priority (v2.16.0) ----
+_spk = object.__new__(m.Speaker)
+import queue as _queue
+_spk.q = _queue.Queue()
+_spk.log = lambda *a, **k: None
+_spk.enabled = True
+_spk.say("Lap 2 oh 7 point 8. 5.5 off your best. Biggest leak: ...")
+_spk.say_clauses("Turn 4: lost 4 tenths there", "brake later")
+_spk.say("Turn 6: brake later", kind="cue")
+_left = list(_spk.q.queue)
+check("speaker: an approach cue purges queued info lines",
+      len(_left) == 1 and _left[0][1] == "Turn 6: brake later"
+      and _left[0][3] == "cue", f"left={_left}")
+_tc1 = m.Coach(dict(CFG, sass_level=3, talk_level=1), FakeSpeaker(),
+               lambda *a, **k: None)
+_tp1 = m.TrackProfile("talk1__car")
+_tc1.set_profile(_tp1)
+_tp1.best_lap_s = 100.0
+_tc1._speak_lap_summary(99.0, [])
+check("talk 1: sass is silenced even at sass_level 3",
+      any("That's a new best." in ln for ln in _tc1.speaker.lines)
+      and not any("Frame it" in ln for ln in _tc1.speaker.lines))
+_tc0 = m.Coach(dict(CFG, sass_level=3, talk_level=0), FakeSpeaker(),
+               lambda *a, **k: None)
+_tp0 = m.TrackProfile("talk0__car")
+_tc0.set_profile(_tp0)
+_tp0.best_lap_s = 100.0
+_tc0._speak_lap_summary(101.0, _worst)
+check("talk 0: summary drops the leak line entirely",
+      not any("Biggest leak" in ln for ln in _tc0.speaker.lines),
+      f"got {_tc0.speaker.lines}")
 
 # ---- briefing variety (v2.14.0) ----
 _bcoach = m.Coach(dict(CFG, sass_level=0), FakeSpeaker(),
