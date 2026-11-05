@@ -161,6 +161,11 @@ say.
 
 ## Changelog
 
+### v2.15.0
+- **Distance fallback: the learner now anchors to the lap's actual start.** It measured its first candidate lap from the moment the dead-spline verdict landed — typically a few hundred metres into the lap — so that candidate came out short (2,270 m against a true 2,870 m lap on the driver's Rainbow Road return) and could never agree with the next lap; learning silently never completed, so no laps, cues or brake tones armed. The coach now tracks where the current lap began before the verdict (a timer reset, or the stream opening at a lap start) and measures candidates reset-to-reset. Verified against the real session file: length learned 2,894 m, reference built from his 1:38.2 lap, eight corners mapped — where v2.14.1 produced nothing.
+- **A combo switch before the first lap starts a fresh session.** Loading one track, sitting in its pits, then switching to another used to stamp the whole session with the first combo (a Rainbow Road drive filed as Laguna Seca). If no lap has been recorded yet, the session files now close and a new set starts under the combo actually driven; a switch after laps exist keeps the single session, as before.
+- Tests grow to 84 checks, including a distilled replay of the failure pattern (stream opens at a lap start, verdict lands mid-lap, driver quits early in lap 3).
+
 ### v2.14.1
 - **New defaults, by the driver's call:** the brake tone is on out of the box (`brake_tone` default true — its two silent sessions traced to an opt-in flag and a busy-channel drop, both now closed), and the sass spectrum defaults to full (`sass_level` 3). Either is still one config line to turn down or off; local configs carrying their own lines keep them.
 

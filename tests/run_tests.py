@@ -543,6 +543,40 @@ for _i in range(300):
     _t2 += 0.033
 check("fallback: live spline stays spline mode", scoach._pos_src == "spline")
 
+# ---- fallback: mid-lap latch anchors to the lap's start (v2.15.0) ----
+# Albert's Nov 4 Rainbow Road return, distilled: the stream opens
+# AT a lap start, the dead-spline verdict lands ~200 m into lap 1,
+# and the driver quits early in lap 3 -- so learning has exactly
+# laps 1 and 2 to agree, and lap 1 must be measured whole (2,880 m),
+# not from the latch point (~2,680 m), or the pair never agrees and
+# nothing arms.
+_ac = m.Coach(dict(CFG, brake_tone=False), FakeSpeaker(),
+              lambda *a, **k: None)
+_ap = m.TrackProfile("anchor__nospline")
+_ac.set_profile(_ap)
+_v = 25.0            # m/s (90 km/h)
+_dt = 1.0 / 30.0
+_dist = [0.0]
+def _drive_laps(coach, dist, laps_m):
+    t = dist[0] / _v
+    for lap_m in laps_m:
+        end = dist[0] + lap_m
+        while dist[0] < end:
+            lt = (dist[0] - (end - lap_m)) / _v
+            coach.feed(t, 0.0, _v * 3.6, 0.4, 0.8, dist[0],
+                       ict_ms=int(lt * 1000))
+            dist[0] += _v * _dt
+            t += _dt
+    return t
+_drive_laps(_ac, _dist, [2880.0, 2880.0, 400.0])
+check("fallback: mid-lap latch still learns from laps 1+2",
+      _ac._fb_len is not None and abs(_ac._fb_len - 2880.0) < 30.0,
+      f"len={_ac._fb_len}")
+check("fallback: flushed lap 2 becomes the reference",
+      _ap.ref is not None and _ap.best_lap_s is not None
+      and abs(_ap.best_lap_s - 115.2) < 2.0,
+      f"best={_ap.best_lap_s}")
+
 # ---- coast split + specific cue wording (v2.14.0) ----
 _n = m.NBINS
 _ref = {"spd": [150.0] * _n, "brk": [0.0] * _n, "gas": [1.0] * _n}

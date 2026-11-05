@@ -202,7 +202,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.14.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.15.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -1996,6 +1996,9 @@ class Coach:
         self._pos_hi = None
         self._pos_travel = 0.0         # moving distance pre-verdict (m)
         self._pos_last_dist = None
+        self._unk_prev_ict = None      # v2.15.0: timer resets seen pre-verdict
+        self._unk_reset_dist = None    # odometer at the last pre-verdict reset
+        self._unk_reset_t = None
         self._fb_buf = None            # buffered feed frames while learning
         self._fb_base_dist = None      # odometer at current lap start
         self._fb_base_t = None
@@ -2579,6 +2582,30 @@ class Coach:
                 self._pos_lo = raw_pos
             if self._pos_hi is None or raw_pos > self._pos_hi:
                 self._pos_hi = raw_pos
+            # v2.15.0: remember where the current lap began, as
+            # best it can be known pre-verdict: at a timer reset,
+            # or at the stream's first frames when they open at a
+            # lap start. The odometer is session-absolute, so if
+            # the dead-spline verdict lands mid-lap, the lap in
+            # progress still has a known start -- the learner
+            # below anchors to it instead of measuring a truncated
+            # lap from the latch point (Albert's Nov 4 Rainbow
+            # Road return: latch ~600 m into a 2,870 m lap made
+            # the candidate 2,270 m, which could never agree with
+            # the true 2,916 m lap after it, so learning never
+            # completed and nothing armed -- no laps, no cues, no
+            # brake tones).
+            if ict_ms is not None:
+                up = self._unk_prev_ict
+                if up is None:
+                    if ict_ms < 10000:
+                        self._unk_reset_dist = dist_m
+                        self._unk_reset_t = t
+                elif (up > 20000 and ict_ms < up - 5000
+                        and ict_ms < 5000):
+                    self._unk_reset_dist = dist_m
+                    self._unk_reset_t = t
+                self._unk_prev_ict = ict_ms
             if self._pos_last_dist is not None and speed_kmh > 10:
                 dd = dist_m - self._pos_last_dist
                 if 0.0 < dd < 60.0:
@@ -2603,8 +2630,15 @@ class Coach:
                 seed = float(self.profile.track_length_m)
             self._fb_len = seed
             self._fb_buf = []
-            self._fb_base_dist = dist_m
-            self._fb_base_t = t
+            # Anchor the first candidate lap to the last timer
+            # reset seen before the latch (v2.15.0); only when no
+            # reset was observed (joined mid-lap before any line
+            # crossing) does the latch point itself anchor it.
+            self._fb_base_dist = (self._unk_reset_dist
+                                  if self._unk_reset_dist is not None
+                                  else dist_m)
+            self._fb_base_t = (self._unk_reset_t
+                               if self._unk_reset_t is not None else t)
             self._fb_prev_ict = ict_ms
             self._fb_skip_officials = 1 if (ict_ms or 0) > 3000 else 0
             print("[coach] this track reports no spline position -- "
@@ -4198,6 +4232,32 @@ def run_live(cfg):
                         # non-empty compound still switches profiles.
                         key = current_key
                     if key != current_key:
+                        if (current_key is not None
+                                and not coach.lap_records):
+                            # v2.15.0: the combo changed before a
+                            # single lap was recorded -- a load-in, a
+                            # think in the pits, a change of mind.
+                            # Files stamped with the first combo
+                            # would mislabel everything driven
+                            # afterwards (Albert's Nov 4 session read
+                            # 'Laguna Seca' over a Rainbow Road
+                            # drive). Close them out and start a
+                            # fresh session set for the new combo.
+                            try:
+                                tf.close()
+                                jf.close()
+                            except Exception:
+                                pass
+                            log, txt_path, jsonl_path, tf, jf = make_logger()
+                            coach.log = log
+                            report_path = os.path.join(
+                                os.path.dirname(txt_path),
+                                os.path.basename(txt_path).replace(
+                                    "debrief_", "report_").replace(
+                                        ".txt", ".html"))
+                            report_state = {"laps": -1, "opened": False}
+                            print(f"Session log: {jsonl_path}")
+                            print(f"Debrief:     {txt_path}")
                         current_key = key
                         profile = TrackProfile(key)
                         if profile.load():
