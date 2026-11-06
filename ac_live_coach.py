@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.23.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.24.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -628,6 +628,14 @@ class Speaker:
         self.cfg = cfg
         self.log = log_fn
         self.q = queue.Queue(maxsize=48)  # v2.23.0: capped (was unbounded)
+        # v2.24.0: playback bookkeeping. A queued line can be
+        # dropped (stale, purged, queue full) without ever being
+        # heard; the coach used to mark cues as fired and spend
+        # budgets at ENQUEUE time, so a dropped cue suppressed
+        # itself for laps. Tagged items report back here when
+        # playback actually starts, and when they are dropped.
+        self.started_tags = []
+        self.dropped_tags = []
         self._speaking = False
         self._tone_cache = {}
         self.enabled = bool(cfg.get("voice_enabled", True))
@@ -908,7 +916,7 @@ class Speaker:
             item = self.q.get()
             if item is None:
                 break
-            ts, text, clauses, _kind = item
+            ts, text, clauses, _kind, tag = item
             if clauses and clauses[0] == "__tone__":
                 # A brake tone is only true at its moment: played
                 # within ~1.5 s of the brake point or not at all --
@@ -926,6 +934,8 @@ class Speaker:
                         self._speaking = False
                 continue
             if time.time() - ts > 15.0:
+                if tag is not None:
+                    self.dropped_tags.append(tag)   # v2.24.0
                 # A cue that waited >15 s in the queue is about a corner
                 # the driver has already finished. Speaking it late is
                 # worse than dropping it -- this is what made session 2
@@ -936,6 +946,8 @@ class Speaker:
                 except Exception:
                     pass
                 continue
+            if tag is not None:
+                self.started_tags.append(tag)   # v2.24.0: playback began
             try:
                 self._speaking = True
                 if clauses:
@@ -963,12 +975,14 @@ class Speaker:
                     kept.append(item)
             self.q.queue = kept
         for item in dropped:
+            if len(item) > 4 and item[4] is not None:
+                self.dropped_tags.append(item[4])   # v2.24.0
             try:
                 self.log("cue_dropped_purged", {"text": item[1]})
             except Exception:
                 pass
 
-    def say(self, text, kind="info"):
+    def say(self, text, kind="info", tag=None):
         # v2.16.1: logging is diagnostics; it must never be able to
         # mute the coach. A dead log target prints and carries on.
         try:
@@ -980,13 +994,15 @@ class Speaker:
             if kind == "cue":
                 self._purge_info()
             try:
-                self.q.put_nowait((time.time(), text, None, kind))
+                self.q.put_nowait((time.time(), text, None, kind, tag))
             except queue.Full:
+                if tag is not None:
+                    self.dropped_tags.append(tag)
                 # v2.23.0: never block the driving loop on a full
                 # speech queue -- drop the line and say so.
                 print(f"  >> (speech queue full -- dropped: {text})")
 
-    def say_clauses(self, a, b, gap_ms=220):
+    def say_clauses(self, a, b, gap_ms=220, tag=None):
         """Speak two clauses with a real beat of silence between
         them (v2.9.0): exit feedback reads as measurement, pause,
         instruction, instead of one welded sentence. The session log
@@ -1000,8 +1016,10 @@ class Speaker:
         if self.enabled:
             try:
                 self.q.put_nowait((time.time(), text,
-                                   (a, b, int(gap_ms)), "info"))
+                                   (a, b, int(gap_ms)), "info", tag))
             except queue.Full:
+                if tag is not None:
+                    self.dropped_tags.append(tag)
                 print(f"  >> (speech queue full -- dropped: {text})")
 
     # -- brake tone (v2.12.0) ------------------------------------------
@@ -1039,7 +1057,7 @@ class Speaker:
     def tone(self):
         if self.enabled:
             try:
-                self.q.put_nowait((time.time(), "", ("__tone__",), "tone"))
+                self.q.put_nowait((time.time(), "", ("__tone__",), "tone", None))
             except queue.Full:
                 pass  # a tone is only true at its moment anyway
 
@@ -1484,6 +1502,18 @@ def zone_time(spd, z0, z1, bin_m):
     return total
 
 
+def _cyclic_span_time(spd, z0, z1, bin_m):
+    """Time over the span [z0, z1) travelling forward around the
+    lap (wrapping past the start/finish). z1 == z0 means the
+    whole lap."""
+    steps = (z1 - z0) % NBINS or NBINS
+    total = 0.0
+    for k in range(steps):
+        v = max(spd[(z0 + k) % NBINS] / 3.6, 3.0)
+        total += bin_m / v
+    return total
+
+
 def _steer_stats(lap_str, ref_str, z0, z1):
     """Steering busy-ness in a span: direction reversals of the
     steering trace and total steering travel, lap vs reference.
@@ -1745,6 +1775,25 @@ def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
     if len(results) > 1:
         for i, r in enumerate(results):
             r["prev_name"] = results[i - 1]["name"]
+    # v2.24.0: extended loss. A corner's bill doesn't stop at its
+    # zone end (110 m past full throttle): a poor exit keeps
+    # costing down the following straight, where it used to be
+    # unattributed -- or surfaced as the NEXT corner's entry
+    # problem -- so 'biggest leak' rankings systematically
+    # undervalued exit corners feeding long straights. loss_ext
+    # charges each corner from its zone start to the next
+    # corner's zone start: the spans tile the lap exactly once,
+    # and their sum is the lap delta.
+    if len(results) > 1:
+        starts = [c["zone_start"] for c in corners]
+        for i, r in enumerate(results):
+            z0 = starts[i]
+            z1 = starts[(i + 1) % len(starts)]
+            r["loss_ext"] = round(
+                _cyclic_span_time(lap_spd, z0, z1, bin_m)
+                - _cyclic_span_time(ref["spd"], z0, z1, bin_m), 3)
+    elif results:
+        results[0]["loss_ext"] = results[0]["loss"]
     return results
 
 
@@ -1817,13 +1866,13 @@ def _cue_candidates(s):
     _entry_dom = _ce >= 0.5 and _ce >= 0.6 * max(s["coast_s"], 0.01)
     if _entry_dom and _bd is not None and _bd <= -8:
         out.append(("brake", f"{name}: you're done braking early and rolling to the apex \u2014 brake later, carry it in",
-                    costs.get("coast", 0.1) + costs.get("brake", 0.1)))
+                    max(costs.get("coast", 0.1), costs.get("brake", 0.1))))  # v2.24.0: was coast+brake -- the coast IS the early brake's consequence; summing priced the same seconds twice
     elif _entry_dom:
         out.append(("coast", f"{name}: you're rolling to the apex off both pedals \u2014 trail the brake deeper",
                     costs.get("coast", 0.1)))
     if _td is not None and _td >= 10 and _cx >= 0.4:
         out.append(("power", f"{name}: you're waiting to get back to power \u2014 pick it up at the apex",
-                    costs.get("coast", 0.1) + costs.get("power", 0.1)))
+                    max(costs.get("coast", 0.1), costs.get("power", 0.1))))  # v2.24.0: same double-count fix
     if s["coast_s"] >= 0.5:
         out.append(("coast", f"{name}: less coasting, commit to a pedal", costs.get("coast", 0.1)))
     _ed = s.get("entry_delta_kmh")
@@ -1932,7 +1981,16 @@ def corner_cue(res, brake_only=False, priority=None, guide=None, symptom_tips=Tr
     # coach's wording replaces the generic fix. Same cue slot, same
     # budgets -- only the words change.
     if symptom_tips and guide is not None and res.get("num") is not None:
-        gtip = guide_tip_for(guide, res["num"], kind)
+        want = None
+        if kind == "brake":
+            bd = s.get("brake_delta_m")
+            if bd is not None and bd < -8:
+                want = "brake_later"     # braked early: go deeper
+            elif bd is not None and bd > 8:
+                want = "brake_earlier"   # braked deep: come back
+            elif (s.get("coast_entry_s") or 0.0) >= 0.5:
+                want = "brake_later"     # done braking, rolling in
+        gtip = guide_tip_for(guide, res["num"], kind, want=want)
         if gtip:
             return f"{res['name']}: {gtip}"
     return txt
@@ -2181,11 +2239,20 @@ def tip_trigger(tip):
     return None if isinstance(tip, str) else tip.get("trigger")
 
 
-def guide_tip_for(guide, num, kind):
-    """The guide tip tagged for symptom `kind` at zone `num`."""
+def guide_tip_for(guide, num, kind, want=None):
+    """The guide tip tagged for symptom `kind` at zone `num`.
+    v2.24.0: `want` is a DIRECTIONAL refinement of the kind
+    (brake_later / brake_earlier): a tip tagged with the exact
+    direction wins over a generic same-kind tip, so a brake-
+    later human tip is never spoken against a braked-too-deep
+    fault (the 'brake' tag covered both directions)."""
     z = guide_zone(guide, num)
     if not z:
         return None
+    if want:
+        for tip in z.get("tips") or []:
+            if tip_trigger(tip) == want:
+                return tip_text(tip)
     for tip in z.get("tips") or []:
         if tip_trigger(tip) == kind:
             return tip_text(tip)
@@ -2240,6 +2307,10 @@ class Coach:
         self._ict_peak_ms = 0        # peak iCurrentTime this lap (diagnostic)
         self.corner_history = {}   # num -> list of analyze dicts (recent laps)
         self._cue_memory = {}      # v2.8.0: num -> last approach cue {text, lap, loss}
+        self._pending_marks = {}   # v2.24.0: speaker tag -> bookkeeping for playback start
+        self._approach_enqueued = set()  # v2.24.0: cues queued, not yet heard
+        self._exit_pending = 0     # v2.24.0: exit lines queued, not yet heard
+        self._exit_deferred = {}   # v2.24.0: exit lines held until clear of all zones
         self.history = None        # v2.1.0: cross-session per-combo history
         self._live_losses = {}     # v2.1.0: this lap's live per-zone results (section feedback)
         self.lap_records = []      # per-lap summaries for the debrief
@@ -2251,6 +2322,7 @@ class Coach:
         self._optimal_ref_time = None
         self.approach_fired = set()
         self.exit_fired = set()
+        self._exit_deferred = {}   # v2.24.0: held exit lines die with the lap
         self.approach_cues_this_lap = 0
         self._tone_fired = set()
         self._tone_pending = None      # v2.13.0: brake tone held for a busy channel
@@ -2486,6 +2558,30 @@ class Coach:
                   f"swings {d['swings_deg']} deg -> {d['splits']} split(s) "
                   f"at {self.cfg.get('heading_split_deg', 20)} deg")
         return corners
+
+    def _refresh_corner_bins(self, p):
+        """v2.24.0: a faster (or cleaner) lap just replaced the
+        reference traces while the corner map kept the OLD lap's
+        brake/throttle bins -- tones and approach triggers fired
+        at points the current reference no longer uses.
+        Re-derive each corner's bins from the NEW reference
+        inside its existing zone (the detector's own zone
+        builder, given the corner's apex). Zone identity,
+        apexes and names do not move; zone_start only widens
+        if the new brake point precedes it."""
+        if not p.ref or not p.corners:
+            return
+        for c in p.corners:
+            z = _zone_from_apex(c["apex_bin"],
+                                c.get("apex_speed_kmh", 0.0),
+                                p.ref["spd"], p.ref["brk"],
+                                p.ref["gas"], p.bin_m)
+            c["brake_bin"] = z["brake_bin"]
+            c["throttle_bin"] = z["throttle_bin"]
+            c["has_brake_zone"] = z["has_brake_zone"]
+            if z["brake_bin"] < c["zone_start"]:
+                c["zone_start"] = max(
+                    0, z["brake_bin"] - max(3, int(30 / p.bin_m)))
 
     def _revalidate_guide(self):
         """v2.23.0: corners detected or remapped after the
@@ -3230,6 +3326,7 @@ class Coach:
                     and (t - self.lap_start_t) / pos > 1.15 * self.profile.best_lap_s):
                 pass  # this lap is far off the pace -- an out/in lap
             else:
+                self._drain_speaker_tags()   # v2.24.0: playback bookkeeping
                 self._service_tone_pending(t, pos)
                 self._maybe_brake_tone(t, pos)
                 # v2.22.0 (Albert): on the guided lap the guide
@@ -3475,27 +3572,12 @@ class Coach:
                 # not an accident: from then on it counts as line and
                 # gets coached like any other corner (Albert: the
                 # summaries "repeat events from other laps", Nov 1).
-                lap_had_off = any(r.get("off") for r in results)
-                # v2.7.0: an AC penalty on the lap blocks the
-                # reference exactly like an off does (the reviewer's
-                # "validity data" point; the offs rule stays primary
-                # in practice sessions, where penalties are rare).
-                lap_blocked = lap_had_off or bool(rec.get("penalty"))
-                repeat_limit = int(self.cfg.get("off_repeat_laps", 3))
-                for r in results:
-                    if r.get("off"):
-                        streak = self._excuse_streak.get(r["num"], 0) + 1
-                        self._excuse_streak[r["num"]] = streak
-                        if streak >= repeat_limit:
-                            r["off"] = False
-                            r["repeat_off"] = True
-                    else:
-                        self._excuse_streak[r["num"]] = 0
-                # Out/in laps get no coaching: the first analysed lap
-                # on a loaded profile is the out lap, and any lap 15%+
-                # off the best is warm-up or a pit return (Albert's
-                # request, Nov 1). They're logged, but kept out of the
-                # corner history, the averages and the spoken summary.
+                # (first_analyzed / out_lap are computed here,
+                # before the excuse streaks: v2.24.0 moved the
+                # classification up so out/in laps can't move the
+                # streaks -- a warm-up excursion used to help
+                # un-excuse a corner, so a later genuine save got
+                # coached as 'a pattern'.)
                 first_analyzed = not self._any_analyzed
                 self._any_analyzed = True
                 out_lap = ((first_analyzed and self._loaded_with_ref)
@@ -3504,6 +3586,26 @@ class Coach:
                                and self.lap_number > 1)
                            or (p.best_lap_s is not None
                                and lap_time > 1.15 * p.best_lap_s))
+                lap_had_off = any(r.get("off") for r in results)
+                # v2.7.0: an AC penalty on the lap blocks the
+                # reference exactly like an off does (the reviewer's
+                # "validity data" point; the offs rule stays primary
+                # in practice sessions, where penalties are rare).
+                lap_blocked = lap_had_off or bool(rec.get("penalty"))
+                repeat_limit = int(self.cfg.get("off_repeat_laps", 3))
+                for r in (results if not out_lap else []):
+                    if r.get("off"):
+                        streak = self._excuse_streak.get(r["num"], 0) + 1
+                        self._excuse_streak[r["num"]] = streak
+                        if streak >= repeat_limit:
+                            r["off"] = False
+                            r["repeat_off"] = True
+                    else:
+                        self._excuse_streak[r["num"]] = 0
+                # Out/in laps get no coaching (see the
+                # classification above): they're logged, but kept
+                # out of the corner history, the averages and the
+                # spoken summary.
                 if not out_lap:
                     self._last_lap_spd = spd
                     self._note_counted_lap_traces(lap_time, spd, brk, results)
@@ -3520,7 +3622,12 @@ class Coach:
                             if r.get("off"):
                                 continue
                             e = hc.setdefault(r["name"], {"sum": 0.0, "n": 0})
-                            e["sum"] = round(e["sum"] + r["loss"], 3)
+                            # v2.24.0: bank the EXTENDED loss
+                            # (see analyze_lap) -- cross-session
+                            # averages rank corners by what they
+                            # really cost, exit bleed included.
+                            e["sum"] = round(e["sum"] + r.get(
+                                "loss_ext", r["loss"]), 3)
                             e["n"] += 1
                         self._save_history()
                 total_loss = sum(max(0.0, r["loss"]) for r in results)
@@ -3577,6 +3684,7 @@ class Coach:
                          "hdg": rec.get("hdg"), "str": rec.get("str")}
                     p.best_lap_s = lap_time
                     p.ref_dirty = False
+                    self._refresh_corner_bins(p)
                     p.save()
                     print(f"[coach] clean reference in: {fmt_lap(lap_time)} "
                           f"(the old one had an off in it)")
@@ -3605,12 +3713,17 @@ class Coach:
                         self.exit_fired.clear()
                         self.speaker.say(f"Reference updated. "
                                          f"{len(p.corners)} corners mapped.")
+                    else:
+                        # v2.24.0: map kept, but its brake/throttle
+                        # bins must follow the new reference.
+                        self._refresh_corner_bins(p)
                     p.save()
                     print(f"[coach] new reference lap: {fmt_lap(lap_time)}")
                     self.log("reference_updated", {"lap_s": lap_time})
 
     def reset_next_approach_state(self, reset_exit_budget=True):
         self.approach_fired = set()
+        self._approach_enqueued = set()   # v2.24.0
         self._tour_corners = set()   # v2.18.0: the tour re-offers every corner each lap
         self._tour_anchor_bin = 0      # v2.22.1: tour delta anchor resets with the corners
         self.exit_fired = set()
@@ -3629,6 +3742,13 @@ class Coach:
         # re-arming the exit-feedback budget (the endless lap 4).
         if reset_exit_budget:
             self._exit_spoken = 0
+            # v2.24.0: unheard exit lines lose their provisional
+            # budget with the lap; their marks are dropped so a
+            # late start can't spend the new lap's budget.
+            self._exit_pending = 0
+            for _tag in [k for k in self._pending_marks
+                         if k[0] == "exit"]:
+                del self._pending_marks[_tag]
         self._live_losses = {}
 
     # -- section feedback (v2.1.0) ------------------------------------
@@ -3811,7 +3931,33 @@ class Coach:
             self.log("tone_dropped_busy", {"num": p["num"]})
             self._tone_pending = None
 
+    def _aggregate_stats(self, num, cue_src):
+        """v2.24.0: the approach cue used to be diagnosed from
+        the latest lap alone, so a one-off symptom on that lap
+        replaced the recurring fault that actually earned the
+        corner its cue. Merge the corner's recent clean laps
+        instead: every symptom field takes the median of its
+        last three clean values; identity fields (name, span,
+        reference) stay from the qualifying lap."""
+        hist = [r for r in self.corner_history.get(num, [])
+                if not r.get("off")][-3:]
+        if len(hist) <= 1:
+            return cue_src
+        agg = dict(cue_src)
+        for f in ("brake_delta_m", "throttle_delta_m", "coast_s",
+                  "coast_entry_s", "coast_exit_s", "apex_delta_kmh",
+                  "apex_shift_m", "entry_delta_kmh", "lockup_s",
+                  "spin_s", "peak_brake", "release_s",
+                  "steer_rev_delta", "steer_work_ratio", "loss"):
+            vals = sorted(r[f] for r in hist if r.get(f) is not None)
+            if vals:
+                agg[f] = vals[len(vals) // 2]
+        agg["mid_lift"] = (sum(1 for r in hist if r.get("mid_lift"))
+                           > len(hist) / 2)
+        return agg
+
     def _maybe_approach_cue(self, t, pos):
+        self._drain_speaker_tags()
         _cap = int(self.cfg["max_approach_cues_per_lap"])
         if self._talk_level() == 1:
             _cap = min(_cap, 4)
@@ -3825,7 +3971,7 @@ class Coach:
         approach_bins = int(float(self.cfg["approach_distance_m"]) / bin_m)
         cur_bin = int(pos * NBINS) % NBINS
         for _avg, num, latest in self._focus_corners():
-            if num in self.approach_fired:
+            if num in self.approach_fired or num in self._approach_enqueued:
                 continue
             # Same remap guard as the summary (v2.16.2): a focus
             # corner from the pre-remap map may not exist anymore.
@@ -3847,8 +3993,9 @@ class Coach:
                 # Mid-corner in a linked sequence: hold the cue. It
                 # stays eligible until the drop point above.
                 continue
+            cue_stats = self._aggregate_stats(num, latest)
             cue = corner_cue(
-                latest,
+                cue_stats,
                 brake_only=(self.cfg.get("focus") == "brake"),
                 priority=guide_priority(getattr(self.profile, "guide", None), num),
                 guide=getattr(self.profile, "guide", None),
@@ -3857,7 +4004,7 @@ class Coach:
                 mem = self._cue_memory.get(num)
                 if (mem and mem["text"] == cue
                         and self.lap_number - mem["lap"] < 3
-                        and latest["loss"] <= mem["loss"] + 0.15):
+                        and cue_stats["loss"] <= mem["loss"] + 0.15):
                     # v2.8.0 cue memory: the same instruction at the
                     # same corner, recently, and no worse -- repeating
                     # it teaches nothing. It earns its way back by
@@ -3865,13 +4012,18 @@ class Coach:
                     self.approach_fired.add(num)
                     self.log("cue_suppressed", {"num": num, "reason": "repeat"})
                 else:
-                    self.speaker.say(cue, kind="cue")
-                    self.last_spoke_t = t
-                    self.approach_fired.add(num)
+                    # v2.24.0: fired/memory are booked when the
+                    # cue is HEARD (the tag mark), not as it is
+                    # queued -- a line dropped stale or purged
+                    # used to suppress this corner for two laps
+                    # without ever being spoken.
+                    _tag = ("approach", self.lap_number, num)
+                    self._pending_marks[_tag] = (
+                        lambda num=num, cue=cue, latest=cue_stats, t=t:
+                        self._mark_approach_heard(num, cue, latest, t))
+                    self.speaker.say(cue, kind="cue", tag=_tag)
+                    self._approach_enqueued.add(num)
                     self.approach_cues_this_lap += 1
-                    self._cue_memory[num] = {
-                        "text": cue, "lap": self.lap_number,
-                        "loss": latest["loss"]}
             else:
                 # v2.23.0: the corner qualified on average loss
                 # but its latest lap has no applicable fix. It
@@ -3882,6 +4034,46 @@ class Coach:
                 self.approach_fired.add(num)
                 continue
             break
+
+    def _drain_speaker_tags(self):
+        """v2.24.0: apply the playback bookkeeping the Speaker
+        has reported since the last drain. A mark runs only when
+        its line actually STARTED playing; a dropped line's mark
+        is discarded instead (an exit drop also releases the
+        provisional budget it was holding)."""
+        sp = self.speaker
+        for attr, heard in (("started_tags", True),
+                            ("dropped_tags", False)):
+            tags = getattr(sp, attr, None)
+            if not tags:
+                continue
+            drained = tags[:]
+            del tags[:]
+            for tag in drained:
+                mark = self._pending_marks.pop(tag, None)
+                if tag[0] == "approach":
+                    # Heard or dropped, the cue is no longer
+                    # queued: on a drop the corner may re-offer
+                    # later in its window.
+                    self._approach_enqueued.discard(tag[2])
+                if heard:
+                    if mark is not None:
+                        mark()
+                elif tag[0] == "exit":
+                    self._exit_pending = max(0, self._exit_pending - 1)
+
+    def _mark_approach_heard(self, num, cue, latest, t):
+        # The coach's clock is feed time, not wall time (the
+        # cooldown math compares against feed timestamps).
+        self.last_spoke_t = t
+        self.approach_fired.add(num)
+        self._cue_memory[num] = {"text": cue, "lap": self.lap_number,
+                                 "loss": latest["loss"]}
+
+    def _mark_exit_heard(self, t):
+        self._exit_spoken += 1
+        self._exit_pending = max(0, self._exit_pending - 1)
+        self.last_spoke_t = t
 
     def _speaker_idle(self):
         """True when the audio channel can start a line NOW:
@@ -4051,12 +4243,64 @@ class Coach:
                 self._guide_tipped.add(num)
                 break
 
+    def _speak_exit(self, t, num, line, fix_text, loss, cap):
+        """Speak one exit line under the lap budget, booked at
+        playback start (v2.24.0). The lap's LAST slot is
+        reserved: a corner outside the session's focus set needs
+        a real (>= 0.5 s) loss to spend it, so two small early
+        leaks can't eat the budget before a big one later in
+        the lap."""
+        if self._exit_spoken + self._exit_pending >= cap:
+            return False
+        if (loss > 0
+                and self._exit_spoken + self._exit_pending >= cap - 1
+                and num not in {n for _a, n, _l in self._focus_corners()}
+                and loss < 0.5):
+            return False
+        self._exit_line_count[num] = self._exit_line_count.get(num, 0) + 1
+        tag = ("exit", self.lap_number, num)
+        self._pending_marks[tag] = lambda t=t: self._mark_exit_heard(t)
+        if fix_text:
+            # v2.9.0: measurement [beat] instruction -- spoken as
+            # two clauses with a spliced pause when supported.
+            say_clauses = getattr(self.speaker, "say_clauses", None)
+            if say_clauses:
+                say_clauses(line, fix_text, int(
+                    self.cfg.get("exit_clause_gap_ms", 220)), tag=tag)
+            else:
+                self.speaker.say(f"{line} -- {fix_text}", tag=tag)
+        else:
+            self.speaker.say(line, tag=tag)
+        self._exit_pending += 1
+        return True
+
+    def _service_exit_deferred(self, t, pos, cap):
+        """v2.24.0: exit lines held because the car was still
+        inside the next corner of a complex when theirs
+        triggered. Speak each once the car is clear of all
+        zones; drop it if the car has run 220 m past its own
+        zone end still boxed in."""
+        if not self._exit_deferred or self.profile is None:
+            return
+        cur_bin = int(pos * NBINS) % NBINS
+        bin_m = self.profile.bin_m
+        for num, d in list(self._exit_deferred.items()):
+            if self._in_any_zone(cur_bin):
+                if ((cur_bin - d["end_bin"]) % NBINS) * bin_m > 220:
+                    del self._exit_deferred[num]
+                continue
+            del self._exit_deferred[num]
+            self._speak_exit(t, num, d["line"], d["fix_text"],
+                             d["loss"], cap)
+
     def _maybe_exit_feedback(self, t, pos):
+        self._drain_speaker_tags()
         # Exit callouts per lap by talk level (v2.16.0): 3 full,
         # 2 reduced (default), 1 essentials.
         _cap = (3 if self._talk_level() >= 2
                 else 2 if self._talk_level() == 1 else 1)
-        if self._exit_spoken >= _cap:
+        self._service_exit_deferred(t, pos, _cap)
+        if self._exit_spoken + self._exit_pending >= _cap:
             return
         if not self._cooldown_ok(t):
             return
@@ -4150,22 +4394,20 @@ class Coach:
                     line = (f"{c['name']}: {_what} there, costing "
                             f"{tenths_phrase(res['loss'])}")
                 if line:
-                    self._exit_line_count[num] = \
-                        self._exit_line_count.get(num, 0) + 1
-                    if fix_text:
-                        # v2.9.0: measurement [beat] instruction --
-                        # spoken as two clauses with a spliced pause
-                        # when the speaker supports it.
-                        say_clauses = getattr(self.speaker, "say_clauses", None)
-                        if say_clauses:
-                            say_clauses(line, fix_text, int(
-                                self.cfg.get("exit_clause_gap_ms", 220)))
-                        else:
-                            self.speaker.say(f"{line} -- {fix_text}")
+                    if self._in_any_zone(cur_bin):
+                        # v2.24.0: zone_end is clamped to the
+                        # next zone's start in complexes, so this
+                        # crossing can sit INSIDE the next corner
+                        # -- the analysis above is already
+                        # snapshotted from live bins; hold only
+                        # the words until the car is clear.
+                        self._exit_deferred[num] = {
+                            "line": line, "fix_text": fix_text,
+                            "loss": res["loss"],
+                            "end_bin": c["zone_end"]}
                     else:
-                        self.speaker.say(line)
-                    self.last_spoke_t = t
-                    self._exit_spoken += 1
+                        self._speak_exit(t, num, line, fix_text,
+                                         res["loss"], _cap)
                 else:
                     # Section colour is full-talk only (v2.16.0).
                     sline = (self._maybe_section_line(num)
@@ -4356,9 +4598,14 @@ class Coach:
                 else:
                     parts.append("That's a new best.")
         clean = [r for r in results if not r.get("off")]
-        worst = max(clean, key=lambda r: r["loss"]) if clean else None
+        # v2.24.0: the biggest leak is ranked on EXTENDED loss
+        # (exit bleed down the straight included), and the
+        # spoken amount is that same number.
+        worst = max(clean, key=lambda r: r.get("loss_ext", r["loss"])) \
+            if clean else None
+        _wl = worst.get("loss_ext", worst["loss"]) if worst else 0.0
         leak_spoken = False
-        if (worst and worst["loss"] >= float(self.cfg["min_loss_to_speak"])
+        if (worst and _wl >= float(self.cfg["min_loss_to_speak"])
                 and self._talk_level() >= 1):
             brake_only = self.cfg.get("focus") == "brake"
             cue = corner_cue(
@@ -4368,10 +4615,10 @@ class Coach:
                 guide=getattr(self.profile, "guide", None),
                 symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
             if cue:
-                parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(worst['loss'])}.")
+                parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(_wl)}.")
                 leak_spoken = True
             elif brake_only:
-                parts.append(f"Biggest leak: {worst['name'].lower()}, costing {tenths_phrase(worst['loss'])}.")
+                parts.append(f"Biggest leak: {worst['name'].lower()}, costing {tenths_phrase(_wl)}.")
                 leak_spoken = True
         if (leak_spoken and sass >= 2
                 and worst.get("num") is not None
@@ -5397,10 +5644,14 @@ def run_replay(cfg, path):
     class ReplaySpeaker:
         def __init__(self):
             self.lines = []
+            self.started_tags = []    # v2.24.0: synchronous playback
+            self.dropped_tags = []
 
         def say(self, text, **kw):
             self.lines.append(text)
             print(f"  [say] {text}")
+            if kw.get("tag") is not None:
+                self.started_tags.append(kw["tag"])
 
         def tone(self):
             self.lines.append("<brake tone>")

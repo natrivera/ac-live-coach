@@ -53,7 +53,7 @@
         "Brake at the 3 board or the start of the curb — earlier than you think",
         {
           "text": "Don't charge the hairpin — braking deep just hangs you wide",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         },
         {
           "text": "Turn in at the 1 board — early apex, V it to the second apex",
@@ -133,7 +133,7 @@
         "Brake around the bridge — light, straight, done before turn-in",
         {
           "text": "Get the braking finished early — balance it on throttle from turn-in",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         },
         {
           "text": "Turn in the moment the yellow anti-cut shows past the bridge",
@@ -173,7 +173,7 @@
         "Brake at the pit-entry access road — most cars can't go later",
         {
           "text": "Light and early — the elevation finishes the corner for you",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         },
         {
           "text": "Turn in earlier than you think and fall into it — hanging wide kills momentum",

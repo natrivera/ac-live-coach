@@ -22,7 +22,7 @@
       "tips": [
         {
           "text": "The exit is blind, but this is a 70-90 mph corner -- brake early and straight on the right, then commit. Over-braking for what you can't see is the novice tell here.",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         },
         {
           "text": "Be back on the throttle before the apex, where the reflectors start on the left, and let the car run out to the right -- don't pinch the exit.",
@@ -81,7 +81,7 @@
       "tips": [
         {
           "text": "Brake earlier than the downhill run tempts you to, alongside the candy-stripe on the right, and turn in early -- grip gets worse the deeper you go here.",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         },
         {
           "text": "Get to full throttle as early as you possibly can -- you're flat from this exit all the way to the braking zone for Turn 9.",

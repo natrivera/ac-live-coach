@@ -29,12 +29,18 @@ class FakeSpeaker:
         self.lines = []
         self.tones = 0
         self.busy = False
+        self.started_tags = []   # v2.24.0: synchronous playback model
+        self.dropped_tags = []
 
     def say(self, text, **kw):
         self.lines.append(text)
+        if kw.get("tag") is not None:
+            self.started_tags.append(kw["tag"])
 
-    def say_clauses(self, a, b, gap_ms=220):
+    def say_clauses(self, a, b, gap_ms=220, tag=None):
         self.lines.append(f"{a} -- {b}")
+        if tag is not None:
+            self.started_tags.append(tag)
 
     def tone(self):
         self.tones += 1
@@ -1316,6 +1322,108 @@ fc.last_spoke_t = -1000.0
 fc._maybe_approach_cue(1000.0, 1350 / m.NBINS)
 check("a no-cue focus corner does not starve the next one",
       any(s.startswith("Turn B") for s in fc.speaker.lines))
+
+# ---- v2.24.0 coaching-accuracy pack ----
+_gd = {"zones": {"7": {"name": "Z", "tips": [
+    {"text": "go deeper here", "trigger": "brake_later"},
+    {"text": "generic brake tip", "trigger": "brake"}]}}}
+_early = dict(BASE, num=7, name="Turn 7", brake_delta_m=-30.0)
+_deep = dict(BASE, num=7, name="Turn 7", brake_delta_m=30.0)
+check("guide tip: braked early earns the brake-later tip",
+      m.corner_cue(_early, guide=_gd) == "Turn 7: go deeper here")
+check("guide tip: braked deep falls back to the generic tip",
+      m.corner_cue(_deep, guide=_gd) == "Turn 7: generic brake tip")
+_mm = dict(BASE, coast_s=1.2, coast_entry_s=1.0, brake_delta_m=-60.0)
+_merged = [c for c in m._cue_candidates(_mm)
+           if c[0] == "brake" and "rolling to the apex" in c[1]]
+check("merged coast+brake is priced at the larger component",
+      _merged and abs(_merged[0][2] - 1.2) < 0.01)
+bc, _bp = new_coach("testBC__car")
+_bp.corners = [{"num": 1, "name": "Turn 1", "zone_start": 900,
+                "zone_end": 1200, "brake_bin": 900, "apex_bin": 1000,
+                "throttle_bin": 1050, "apex_speed_kmh": 90.0,
+                "has_brake_zone": True}]
+_brk = [0.0] * m.NBINS
+for j in range(950, 1001):
+    _brk[j] = 0.9
+_bp.ref = {"spd": [150.0] * m.NBINS, "brk": _brk,
+           "gas": [1.0] * m.NBINS}
+bc._refresh_corner_bins(_bp)
+check("brake bins follow a replaced reference",
+      _bp.corners[0]["brake_bin"] == 950)
+fc2, _fp2 = new_coach("testFC2__car")
+_fp2.corners = [
+    {"num": 1, "name": "Turn A", "zone_start": 1290, "zone_end": 1310,
+     "brake_bin": 1300, "apex_bin": 1305, "has_brake_zone": True},
+    {"num": 2, "name": "Turn B", "zone_start": 1440, "zone_end": 1460,
+     "brake_bin": 1450, "apex_bin": 1455, "has_brake_zone": True}]
+_b2 = dict(BASE, name="Turn B", loss=0.6, off=False, coast_s=0.9)
+fc2.corner_history = {2: [_b2]}
+fc2.lap_number = 1
+fc2.last_spoke_t = -1000.0
+fc2._maybe_approach_cue(1000.0, 1350 / m.NBINS)
+_tag = next(iter(fc2._pending_marks))
+check("a queued cue is enqueued, not yet fired",
+      2 in fc2._approach_enqueued and 2 not in fc2.approach_fired)
+fc2.speaker.started_tags.remove(_tag)
+fc2.speaker.dropped_tags.append(_tag)
+fc2._drain_speaker_tags()
+_nl = len(fc2.speaker.lines)
+fc2._maybe_approach_cue(1001.0, 1350 / m.NBINS)
+check("a dropped cue is re-offered, not suppressed",
+      len(fc2.speaker.lines) > _nl and 2 not in fc2._cue_memory)
+ec, _ep = new_coach("testEC__car")
+ec._exit_spoken = 1
+check("the last exit slot is reserved from a small non-focus leak",
+      ec._speak_exit(1000.0, 9, "Turn 9: lost 3 tenths there",
+                     None, 0.3, 2) is False
+      and ec.speaker.lines == [])
+check("a big leak may spend the reserved slot",
+      ec._speak_exit(1000.0, 9, "Turn 9: lost 6 tenths there",
+                     None, 0.6, 2) is True
+      and ec._exit_pending == 1 and ec._exit_spoken == 1)
+ec._drain_speaker_tags()
+check("the exit budget is spent when the line is heard",
+      ec._exit_spoken == 2 and ec._exit_pending == 0)
+dc, _dp = new_coach("testDC__car")
+_dp.corners = [{"num": 1, "name": "Turn 1", "zone_start": 940,
+                "zone_end": 1000, "brake_bin": 950, "apex_bin": 980,
+                "has_brake_zone": True},
+               {"num": 2, "name": "Turn 2", "zone_start": 1001,
+                "zone_end": 1100, "brake_bin": 1060, "apex_bin": 1080,
+                "has_brake_zone": True}]
+dc._exit_deferred = {1: {"line": "Turn 1: lost 4 tenths there",
+                         "fix_text": None, "loss": 0.4,
+                         "end_bin": 1000}}
+dc._service_exit_deferred(1000.0, 1050 / m.NBINS, 2)  # inside Turn 2
+check("a deferred exit line waits while the car is in a zone",
+      dc._exit_deferred and dc.speaker.lines == [])
+dc._service_exit_deferred(1001.0, 1300 / m.NBINS, 2)  # clear of all zones
+check("a deferred exit line speaks once the car is clear",
+      not dc._exit_deferred
+      and dc.speaker.lines == ["Turn 1: lost 4 tenths there"])
+_spd_ref = [150.0] * m.NBINS
+_spd_lap = [150.0] * m.NBINS
+for j in range(1100, 1300):
+    _spd_lap[j] = 100.0    # the bleed lives on the straight
+_cs = [{"num": 1, "name": "One", "zone_start": 900, "zone_end": 1050,
+        "brake_bin": 950, "apex_bin": 1000, "throttle_bin": 1030,
+        "apex_speed_kmh": 150.0, "has_brake_zone": True},
+       {"num": 2, "name": "Two", "zone_start": 1500, "zone_end": 1650,
+        "brake_bin": 1550, "apex_bin": 1600, "throttle_bin": 1630,
+        "apex_speed_kmh": 150.0, "has_brake_zone": True}]
+_rows = m.analyze_lap(_spd_lap, [0.0] * m.NBINS, [1.0] * m.NBINS,
+                      {"spd": _spd_ref, "brk": [0.0] * m.NBINS,
+                       "gas": [1.0] * m.NBINS}, _cs, 2.2)
+check("extended loss charges the straight bleed to the corner before it",
+      abs(_rows[0]["loss"]) < 0.05 and _rows[0]["loss_ext"] > 0.3
+      and abs(_rows[1]["loss_ext"]) < 0.05)
+ag, _ap = new_coach("testAG__car")
+_r = lambda bd: dict(BASE, loss=0.5, off=False, brake_delta_m=bd)
+ag.corner_history = {5: [_r(-10.0), _r(-12.0), _r(-60.0)]}
+_agg = ag._aggregate_stats(5, ag.corner_history[5][-1])
+check("cue diagnosis medians out a one-off symptom",
+      _agg["brake_delta_m"] == -12.0)
 
 print()
 if FAILS:

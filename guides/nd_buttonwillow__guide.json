@@ -184,7 +184,7 @@
         "Threshold brake up the steep hill",
         {
           "text": "Brake as late as the car allows",
-          "trigger": "brake"
+          "trigger": "brake_later"
         },
         "Clip the apex curb at crest",
         "Let it drift neutral over crest",
@@ -202,7 +202,7 @@
       "tips": [
         {
           "text": "Brake very late — use the corner's width as the braking zone",
-          "trigger": "brake"
+          "trigger": "brake_later"
         },
         "Early first apex — it's a double apex",
         "Flat downhill into it",
@@ -235,7 +235,7 @@
         "Keep the right wheel off the slippery entry curb under braking (Boosted)",
         {
           "text": "Brake a touch early — greed here kills PBs",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         }
       ]
     }

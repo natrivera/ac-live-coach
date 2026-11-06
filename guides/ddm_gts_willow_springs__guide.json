@@ -138,7 +138,7 @@
       "tips": [
         {
           "text": "Brake straight and early — never brake around the off-camber left",
-          "trigger": "brake"
+          "trigger": "brake_earlier"
         },
         "Bleed off all the speed before the off-camber left — it's the spin corner",
         "Don't clip in too hard — that's how it goes backwards",

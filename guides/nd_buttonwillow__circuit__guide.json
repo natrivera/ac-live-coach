@@ -49,7 +49,7 @@
       "tips": [
         {
           "text": "Fastest approach on the track and the wall comes up quick -- brake and downshift in a straight line off the left-side cone markers, and work the point deeper gradually.",
-          "trigger": "brake"
+          "trigger": "brake_later"
         },
         {
           "text": "Very late apex: release most of the brake but keep the front weighted, apex on the curbing, then throttle and let it run out -- and remember pit-entry traffic merges on your left here.",
