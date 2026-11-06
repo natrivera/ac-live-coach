@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""AC Live Coach — control panel (v2.26.0).
+"""AC Live Coach — control panel (v2.26.0; CM-style dark theme
+v2.27.0).
 
 The whole interface to the coach in one window that stays open
 across sessions: Start/Stop the engine, watch its state, flip the
@@ -7,7 +8,7 @@ coach's toggles live, and edit corner names without touching a
 JSON file in Notepad.
 
 Design rules (Albert's, Nov 6 2026):
-- The panel HOSTS the engine -- run_live runs on a worker thread
+- The panel HOSTS the engine — run_live runs on a worker thread
   inside this process, so toggles mutate the very config dict the
   coach reads and apply immediately. Everything the coach prints
   lands in the Log tab (stdout is teed there).
@@ -16,10 +17,13 @@ Design rules (Albert's, Nov 6 2026):
   anything else in the file is preserved), names persist to the
   same <track>__names.json files the coach has always used.
 - The console launch (ac_live_coach.py) keeps working unchanged
-  as a fallback -- the engine is shared, not forked.
+  as a fallback — the engine is shared, not forked.
 - Reports stay HTML in the browser; the panel just opens them.
 - This is a pit-lane tool: status and controls, not a live
   dashboard to watch while driving.
+- The theme is a Content Manager-style dark: flat charcoal
+  surfaces, hairline borders, white text, one blue accent.
+  tkinter's clam theme carries it; no extra dependencies.
 """
 
 import glob
@@ -42,7 +46,7 @@ except Exception:  # headless import for tests of the helpers
 # ------------------------------------------------------------------
 # Toggle spec: (key, label, kind, choices, live?)
 # live=False means the value is read when the engine/speaker is
-# constructed -- the row is badged "next launch" rather than
+# constructed — the row is badged "next launch" rather than
 # pretending otherwise.
 # ------------------------------------------------------------------
 TOGGLES = [
@@ -66,6 +70,78 @@ TOGGLES = [
     ("piper_voice", "Piper voice", "text", None, False),
 ]
 MANAGED_KEYS = [t[0] for t in TOGGLES]
+
+# Content Manager-style palette.
+BG = "#1e1e1e"        # window
+SURFACE = "#252526"   # header band / tab strip
+RAISED = "#2d2d30"    # selected tab / hover
+FIELD = "#333337"     # entry + combo fields
+BORDER = "#3f3f46"
+TEXT = "#f1f1f1"
+DIM = "#a3a3a3"
+ACCENT = "#4c9aff"
+ACCENT_HOVER = "#6cb0ff"
+
+
+def apply_theme(root):
+    """Flat dark clam styling, CM-flavoured. Called once."""
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    root.configure(bg=BG)
+    style.configure(".", background=BG, foreground=TEXT,
+                    font=("Segoe UI", 10), borderwidth=0)
+    style.configure("TFrame", background=BG)
+    style.configure("Surface.TFrame", background=SURFACE)
+    style.configure("TLabel", background=BG, foreground=TEXT)
+    style.configure("Surface.TLabel", background=SURFACE, foreground=TEXT)
+    style.configure("Dim.TLabel", background=BG, foreground=DIM)
+    style.configure("SurfaceDim.TLabel", background=SURFACE,
+                    foreground=DIM)
+    style.configure("Title.TLabel", background=SURFACE, foreground=TEXT,
+                    font=("Segoe UI", 12, "bold"))
+    style.configure("State.TLabel", background=SURFACE, foreground=TEXT,
+                    font=("Segoe UI", 12, "bold"))
+    style.configure("Info.TLabel", background=BG, foreground=DIM,
+                    font=("Segoe UI", 10))
+    style.configure("TButton", background=FIELD, foreground=TEXT,
+                    borderwidth=0, focusthickness=0, padding=(12, 6))
+    style.map("TButton", background=[("active", RAISED)])
+    style.configure("Accent.TButton", background=ACCENT,
+                    foreground="#ffffff", borderwidth=0,
+                    focusthickness=0, padding=(16, 7),
+                    font=("Segoe UI", 10, "bold"))
+    style.map("Accent.TButton",
+              background=[("active", ACCENT_HOVER),
+                          ("disabled", FIELD)])
+    style.configure("TNotebook", background=BG, borderwidth=0)
+    style.configure("TNotebook.Tab", background=SURFACE,
+                    foreground=DIM, borderwidth=0, padding=(14, 7),
+                    font=("Segoe UI", 10))
+    style.map("TNotebook.Tab",
+              background=[("selected", RAISED)],
+              foreground=[("selected", TEXT)])
+    style.configure("TEntry", fieldbackground=FIELD, foreground=TEXT,
+                    borderwidth=1, bordercolor=BORDER,
+                    lightcolor=BORDER, darkcolor=BORDER,
+                    insertcolor=TEXT, padding=4)
+    style.configure("TCombobox", fieldbackground=FIELD,
+                    foreground=TEXT, background=FIELD, borderwidth=1,
+                    bordercolor=BORDER, lightcolor=BORDER,
+                    darkcolor=BORDER, padding=4, arrowcolor=DIM)
+    style.map("TCombobox", fieldbackground=[("readonly", FIELD)])
+    style.configure("TCheckbutton", background=BG, foreground=TEXT,
+                    focusthickness=0)
+    style.map("TCheckbutton",
+              indicatorcolor=[("selected", ACCENT), ("!selected", FIELD)])
+    style.configure("TScrollbar", background=RAISED, troughcolor=BG,
+                    borderwidth=0, arrowcolor=DIM)
+    style.configure("TSeparator", background=BORDER)
+    # The combobox dropdown list is a raw tk listbox under the hood.
+    root.option_add("*TCombobox*Listbox.background", FIELD)
+    root.option_add("*TCombobox*Listbox.foreground", TEXT)
+    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+    root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+    root.option_add("*TCombobox*Listbox.font", "Segoe UI 10")
 
 
 # ------------------------------------------------------------------
@@ -194,29 +270,38 @@ class Panel:
         self.name_entries = {}
         self.current_combo = None
 
-        root.title(f"AC Live Coach v{m.VERSION} — control panel")
-        root.geometry("760x640")
+        apply_theme(root)
+        root.title("AC Live Coach — Control Panel")
+        root.geometry("780x660")
+        root.minsize(680, 540)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        head = ttk.Frame(root, padding=10)
-        head.pack(fill="x")
-        self.state_var = tk.StringVar(value="Stopped")
-        ttk.Label(head, textvariable=self.state_var,
-                  font=("Segoe UI", 14, "bold")).pack(side="left")
-        self.run_btn = ttk.Button(head, text="Start coach",
+        band = ttk.Frame(root, style="Surface.TFrame", padding=(14, 10))
+        band.pack(fill="x")
+        left = ttk.Frame(band, style="Surface.TFrame")
+        left.pack(side="left")
+        ttk.Label(left, text="AC LIVE COACH", style="Title.TLabel"
+                  ).pack(anchor="w")
+        ttk.Label(left, text=f"control panel · v{m.VERSION}",
+                  style="SurfaceDim.TLabel").pack(anchor="w")
+        self.run_btn = ttk.Button(band, text="Start coach",
+                                  style="Accent.TButton",
                                   command=self._toggle_engine)
         self.run_btn.pack(side="right")
-        ttk.Button(head, text="Open latest report",
-                   command=self._open_report).pack(side="right", padx=6)
+        ttk.Button(band, text="Open latest report",
+                   command=self._open_report).pack(side="right", padx=8)
+        self.state_var = tk.StringVar(value="Stopped")
+        ttk.Label(band, textvariable=self.state_var,
+                  style="State.TLabel").pack(side="right", padx=10)
 
-        info = ttk.Frame(root, padding=(10, 0))
+        info = ttk.Frame(root, padding=(14, 8, 14, 0))
         info.pack(fill="x")
         self.info_var = tk.StringVar(value="")
         ttk.Label(info, textvariable=self.info_var,
-                  font=("Segoe UI", 11)).pack(side="left")
+                  style="Info.TLabel").pack(side="left")
 
         nb = ttk.Notebook(root)
-        nb.pack(fill="both", expand=True, padx=10, pady=10)
+        nb.pack(fill="both", expand=True, padx=12, pady=10)
         self._build_toggles(nb)
         self._build_names(nb)
         self._build_log(nb)
@@ -229,12 +314,12 @@ class Panel:
 
     # ---- tabs -------------------------------------------------
     def _build_toggles(self, nb):
-        tab = ttk.Frame(nb, padding=10)
+        tab = ttk.Frame(nb, padding=(14, 12))
         nb.add(tab, text="Coach toggles")
         for key, label, kind, choices, live in TOGGLES:
             row = ttk.Frame(tab)
-            row.pack(fill="x", pady=3)
-            ttk.Label(row, text=label, width=44).pack(side="left")
+            row.pack(fill="x", pady=4)
+            ttk.Label(row, text=label, width=46).pack(side="left")
             if kind == "bool":
                 var = tk.BooleanVar(value=bool(self.cfg.get(key)))
                 ctl = ttk.Checkbutton(
@@ -258,31 +343,32 @@ class Panel:
             ctl.pack(side="left")
             if not live:
                 ttk.Label(row, text="applies next launch",
-                          foreground="#888").pack(side="left", padx=6)
+                          style="Dim.TLabel").pack(side="left", padx=8)
             self.vars[key] = var
 
     def _build_names(self, nb):
-        tab = ttk.Frame(nb, padding=10)
+        tab = ttk.Frame(nb, padding=(14, 12))
         nb.add(tab, text="Corner names")
         top = ttk.Frame(tab)
         top.pack(fill="x")
-        ttk.Label(top, text="Combo:").pack(side="left")
+        ttk.Label(top, text="Combo").pack(side="left")
         self.combo_var = tk.StringVar()
         self.combo_box = ttk.Combobox(top, textvariable=self.combo_var,
-                                      state="readonly", width=52)
-        self.combo_box.pack(side="left", padx=6)
+                                      state="readonly", width=50)
+        self.combo_box.pack(side="left", padx=8)
         self.combo_box.bind("<<ComboboxSelected>>",
                             lambda e: self._load_combo())
         ttk.Button(top, text="Refresh list",
                    command=self._refresh_combos).pack(side="left")
-        ttk.Button(top, text="Save names",
+        ttk.Button(top, text="Save names", style="Accent.TButton",
                    command=self._save_names).pack(side="right")
         wrap = ttk.Frame(tab)
-        wrap.pack(fill="both", expand=True, pady=8)
-        canvas = tk.Canvas(wrap, highlightthickness=0)
+        wrap.pack(fill="both", expand=True, pady=10)
+        canvas = tk.Canvas(wrap, highlightthickness=0, bg=BG,
+                           bd=0)
         scroll = ttk.Scrollbar(wrap, orient="vertical",
                                command=canvas.yview)
-        self.names_frame = ttk.Frame(canvas)
+        self.names_frame = ttk.Frame(canvas, padding=(2, 2))
         self.names_frame.bind(
             "<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -296,7 +382,9 @@ class Panel:
         tab = ttk.Frame(nb, padding=6)
         nb.add(tab, text="Log")
         self.log_text = scrolledtext.ScrolledText(
-            tab, font=("Consolas", 9), state="disabled", wrap="word")
+            tab, font=("Consolas", 9), state="disabled", wrap="word",
+            bg="#191919", fg="#d4d4d4", insertbackground=TEXT,
+            relief="flat", borderwidth=0, padx=8, pady=6)
         self.log_text.pack(fill="both", expand=True)
 
     # ---- toggles ----------------------------------------------
@@ -342,8 +430,9 @@ class Panel:
             return
         for c in corners:
             row = ttk.Frame(self.names_frame)
-            row.pack(fill="x", pady=2)
-            ttk.Label(row, text=f"{c['num']}.", width=4).pack(side="left")
+            row.pack(fill="x", pady=3)
+            ttk.Label(row, text=f"{c['num']}.", width=4,
+                      style="Dim.TLabel").pack(side="left")
             var = tk.StringVar(
                 value=mapping.get(str(c["num"])) or c.get("name", ""))
             ttk.Entry(row, textvariable=var, width=34).pack(side="left")

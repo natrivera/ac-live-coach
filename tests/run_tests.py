@@ -1440,6 +1440,9 @@ ob._evaluate_objectives([_brow(-12.0, 0.2)])
 check("one follow-up lap leaves the objective pending",
       ob._objectives[0]["status"] == "open")
 ob._evaluate_objectives([_brow(-10.0, 0.2)])
+check("two follow-up laps still leave it open (three judge)",
+      ob._objectives[0]["status"] == "open")
+ob._evaluate_objectives([_brow(-11.0, 0.2)])
 check("improved behaviour + improved loss classifies effective",
       ob._objectives[0]["status"] == "effective")
 check("closed objectives persist into the combo history",
@@ -1454,6 +1457,7 @@ ob2.corner_history = {2: [_brow(-40.0, 0.5), _brow(-40.0, 0.5)]}
 ob2._open_objective(2, "brake", "Turn 2: brake later", _brow(-40.0, 0.5))
 ob2._evaluate_objectives([_brow(-58.0, 0.7)])
 ob2._evaluate_objectives([_brow(-60.0, 0.7)])
+ob2._evaluate_objectives([_brow(-59.0, 0.7)])
 check("a worsened metric classifies negative",
       ob2._objectives[0]["status"] == "negative")
 ob3, _op4 = new_coach("testOB3__car")
@@ -1461,6 +1465,7 @@ ob3.corner_history = {2: [_brow(-40.0, 0.5), _brow(-40.0, 0.5)]}
 ob3._open_objective(2, "brake", "Turn 2: brake later", _brow(-40.0, 0.5))
 ob3._evaluate_objectives([_brow(-38.0, 0.5)])
 ob3._evaluate_objectives([_brow(-41.0, 0.5)])
+ob3._evaluate_objectives([_brow(-40.0, 0.5)])
 check("an unchanged metric classifies no response",
       ob3._objectives[0]["status"] == "no response")
 ob4, _op5 = new_coach("testOB4__car")
@@ -1468,6 +1473,7 @@ _lrow = {"num": 3, "name": "Turn 3", "off": False, "loss": 0.4,
          "loss_ext": 0.4}
 ob4.corner_history = {3: [_lrow, _lrow]}
 ob4._open_objective(3, "lift", "Turn 3: stay in it", _lrow)
+ob4._evaluate_objectives([_lrow])
 ob4._evaluate_objectives([_lrow])
 ob4._evaluate_objectives([_lrow])
 check("a metric-less kind can only classify inconclusive",
@@ -1496,6 +1502,9 @@ rc2._objectives = [{"num": 1, "name": "Turn 1", "kind": "brake",
 _html = m.build_report_html(rc2)
 check("report carries the coaching effectiveness section",
       "Coaching effectiveness" in _html and "retained" in _html)
+check("report tables lead with turn number, then corner name",
+      "<th>#</th><th>Corner</th><th>Avg loss</th>" in _html
+      and "<td>1</td><td>" in _html)
 
 # ---- v2.26.0 panel helpers + stoppable engine ----
 import coach_panel as panel

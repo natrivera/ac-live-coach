@@ -194,6 +194,11 @@ against expectations — the regression net for coaching changes.
 
 ## Changelog
 
+### v2.27.0
+- **Report tables lead with the turn number**, then the corner name (corner data and coaching effectiveness alike).
+- **The panel gets a Content Manager-style dark theme**: flat charcoal surfaces, hairline borders, white text, one blue accent — no more default-widget beige.
+- **Three fixes from the Nov 6 session data**: objectives now judge on **three** follow-up laps, so the median is a median (with two, it was the worse of the pair and verdicts leaned pessimistic); the settings-in-force line is **re-logged into the real session file** when the pre-session rotation fires, instead of being stranded in the discarded pits file; and the **guided lap no longer holds its lines inside a complex** — the zones tile continuously there, so the hold consumed Cotton Corners 1 and 2 as 'missed' without a word (normal-lap guide lines keep the hold).
+
 ### v2.26.0
 - **The control panel** (`coach_panel.py`): the coach's whole interface in one window that stays open across sessions. It hosts the engine itself — Start/Stop in the window, live status (waiting / on track, lap, last, best), and the coach's own printed output in a Log tab. The **Coach toggles** tab flips the main settings live (they mutate the config the running coach reads, and persist to `coach_config.json`; the few that are chosen at engine start — voice on/off, engine, Piper voice — are badged 'applies next launch'). The **Corner names** tab lists any combo's corners against their current names and saves edits to the same names files, applying them to a running session on the spot. Reports still open as HTML in the browser, from the button in the header. The console launch (`ac_live_coach.py`) is unchanged and keeps working as a fallback — the engine is shared, not forked, and gained only a stop event and a status snapshot to make hosting possible.
 

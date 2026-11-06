@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.26.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.27.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -4211,7 +4211,7 @@ class Coach:
                 met[0] if met else None,
                 r.get("loss_ext", r["loss"]),
                 met[1] if met else None))
-            if ob["status"] == "open" and len(ob["follow"]) >= 2:
+            if ob["status"] == "open" and len(ob["follow"]) >= 3:
                 self._classify_objective(ob)
             elif ob["status"] == "effective":
                 post = ob["follow"][ob.get("_close_n", 0):]
@@ -4371,8 +4371,14 @@ class Coach:
                 self.log("guide_line_skipped",
                          {"num": num, "reason": "missed"})
                 continue
-            if self._in_any_zone(cur_bin):
-                continue  # mid-corner in a sequence: hold until clear
+            if not exclusive and self._in_any_zone(cur_bin):
+                continue  # mid-corner in a sequence: hold until
+                # clear. The EXCLUSIVE guided lap is exempt
+                # (v2.27.0): inside a complex the zones tile
+                # continuously, so the hold consumed Cotton
+                # Corners 1+2 as 'missed' without a word spoken
+                # (Albert's Nov 6 session) -- on the tour lap the
+                # next line SHOULD land in the previous tail.
             if num in self.approach_fired and not exclusive:
                 # A data cue already claimed this corner on this
                 # lap; his own numbers outrank the book. (On the
@@ -5340,19 +5346,19 @@ def build_report_html(coach):
     rows = []
     for c, avg, latest in stats:
         if latest is None:
-            rows.append(f"<tr><td>{esc(corner_label(c))}</td><td>—</td><td>—</td>"
-                        f"<td>—</td><td>—</td><td>—</td></tr>")
+            rows.append(f"<tr><td>{c['num']}</td><td>{esc(c['name'])}</td>"
+                        f"<td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>")
         else:
             bd = latest["brake_delta_m"]
             bd_s = f"{bd * FT_PER_M:+.0f}" if bd is not None else "—"
             sp = spreads.get(c["num"])
             sp_s = f"{sp:.0f}" if sp is not None else "—"
             rows.append(
-                f"<tr><td><b>{esc(corner_label(c))}</b></td>"
+                f"<tr><td>{c['num']}</td><td><b>{esc(c['name'])}</b></td>"
                 f"<td style='color:{loss_color(avg)}'><b>{avg:+.2f}s</b></td>"
                 f"<td>{bd_s}</td><td>{sp_s}</td><td>{latest['apex_delta_kmh'] * MPH_PER_KMH:+.0f}</td>"
                 f"<td>{latest['coast_s']:.1f}s</td></tr>")
-    table_html = ("<table><tr><th>Corner</th><th>Avg loss</th><th>Brake Δ (last lap, ft)</th>"
+    table_html = ("<table><tr><th>#</th><th>Corner</th><th>Avg loss</th><th>Brake Δ (last lap, ft)</th>"
                   "<th>Brake spread (ft)</th><th>Apex Δ (mph)</th><th>Coast</th></tr>" + "\n".join(rows) + "</table>")
 
     # v2.3: track-guide section -- the human coach's notes paired
@@ -5419,7 +5425,7 @@ def build_report_html(coach):
             if ob.get("retained"):
                 _st += " · retained"
             _rows.append(
-                f"<tr><td>{esc(ob['name'])}</td>"
+                f"<tr><td>{ob.get('num', '—')}</td><td>{esc(ob['name'])}</td>"
                 f"<td>{esc(_KIND_LABEL.get(ob['kind'], ob['kind']))}</td>"
                 f"<td>{_before} → {_after}</td><td>{esc(_st)}</td></tr>")
         for h in _hist_obs[-6:]:
@@ -5429,7 +5435,7 @@ def build_report_html(coach):
             if _live and h.get("status") == "effective":
                 _st += " · recurred this session"
             _rows.append(
-                f"<tr><td>{esc(h.get('name', ''))}</td>"
+                f"<tr><td>—</td><td>{esc(h.get('name', ''))}</td>"
                 f"<td>{esc(_KIND_LABEL.get(h.get('kind'), h.get('kind') or ''))}</td>"
                 f"<td>earlier session</td><td>{esc(_st)}</td></tr>")
         objectives_html = (
@@ -5438,7 +5444,7 @@ def build_report_html(coach):
             "is heard; its baseline is the median of the previous "
             "clean laps, and it is judged on the laps after — "
             "behaviour first, lap time as the guardrail.</p>\n"
-            "<table><tr><th>Corner</th><th>Coached</th>"
+            "<table><tr><th>#</th><th>Corner</th><th>Coached</th>"
             "<th>Before → after</th><th>Result</th></tr>"
             + "".join(_rows) + "</table>\n")
 
@@ -5664,6 +5670,10 @@ def run_live(cfg, stop_event=None, status=None):
                             # the coach for the whole session
                             # (Albert's Nov 4 Streets session).
                             speaker.log = log
+                            try:
+                                log("config_in_force", _in_force)
+                            except Exception:
+                                pass
                             report_path = os.path.join(
                                 os.path.dirname(txt_path),
                                 os.path.basename(txt_path).replace(
