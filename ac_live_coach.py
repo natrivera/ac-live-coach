@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.20.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.21.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2087,6 +2087,8 @@ class Coach:
         self.history = None        # v2.1.0: cross-session per-combo history
         self._live_losses = {}     # v2.1.0: this lap's live per-zone results (section feedback)
         self.lap_records = []      # per-lap summaries for the debrief
+        self._lap_paths = {}       # v2.21.0: lap_time -> driven-line
+                                   # points, for the report heatmap
         self._last_lap_spd = None  # v2.7.0: last counted lap's trace (report)
         self._session_best = None  # v2.11.0: {time, spd, brk} of the session's best lap
         self._optimal = None       # v2.11.0: stitched best-zone lap {spd, brk, zone_times}
@@ -3270,6 +3272,8 @@ class Coach:
                            "ict_peak_s": rec["ict_peak_s"],
                            "out_lap": bool(out_lap)}
                 self.lap_records.append(lap_rec)
+                if rec.get("path_pts"):
+                    self._lap_paths[lap_time] = rec["path_pts"]
                 self.log("lap", lap_rec)
                 if out_lap:
                     print(f"[lap] out/in lap ({fmt_lap(lap_time)}) -- no coaching")
@@ -4398,23 +4402,132 @@ def build_report_html(coach):
                             for x, y in zip(xs, ys))
         parts = [f'<svg viewBox="0 0 {w * scale + 140:.0f} {h * scale + 100:.0f}" '
                  f'xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">']
+        # v2.21.0: the reference line becomes a pale ribbon and the
+        # session best lap's own driven line rides on top of it,
+        # colored by speed; corner badges move off the line on leader
+        # lines; S/F is a checkered strip. (Albert's heatmap
+        # prototype, Nov 5.)
         parts.append(f'<polygon points="{pts_attr}" fill="rgba(30,100,200,0.05)" '
-                     f'stroke="#20508f" stroke-width="3" stroke-linejoin="round"/>')
-        sx, sy = XY(xs[0], ys[0])
-        parts.append(f'<rect x="{sx - 6:.0f}" y="{sy - 6:.0f}" width="12" height="12" '
-                     f'fill="#111"/><text x="{sx + 12:.0f}" y="{sy + 4:.0f}" '
-                     f'font-size="13" font-weight="bold">S/F</text>')
+                     f'stroke="#b9c9dd" stroke-width="12" stroke-linejoin="round"/>')
+        parts.append(f'<polyline points="{pts_attr}" fill="none" '
+                     f'stroke="#20508f" stroke-width="1.2" opacity="0.55" '
+                     f'stroke-linejoin="round"/>')
+        oxy = [XY(x, y) for x, y in zip(xs, ys)]
+        cenx = sum(q[0] for q in oxy) / len(oxy)
+        ceny = sum(q[1] for q in oxy) / len(oxy)
+
+        TURBO_LUT = [(48, 18, 59), (59, 47, 128), (67, 78, 186),
+                     (70, 107, 227), (70, 133, 250), (59, 160, 253),
+                     (40, 188, 235), (26, 210, 210), (26, 228, 182),
+                     (50, 242, 152), (85, 250, 118), (128, 255, 83),
+                     (164, 252, 60), (190, 244, 52), (217, 228, 54),
+                     (238, 207, 58), (250, 186, 57), (254, 158, 47),
+                     (251, 126, 33), (242, 96, 20), (228, 69, 10),
+                     (208, 47, 5), (185, 30, 2), (155, 15, 1),
+                     (122, 4, 3)]
+
+        def turbo(t):
+            t = max(0.0, min(1.0, t)) * (len(TURBO_LUT) - 1)
+            i = int(t)
+            f = t - i
+            a = TURBO_LUT[i]
+            b = TURBO_LUT[min(i + 1, len(TURBO_LUT) - 1)]
+            return "rgb(%d,%d,%d)" % tuple(
+                int(round(a[k] + (b[k] - a[k]) * f)) for k in range(3))
+
+        sb = getattr(coach, "_session_best", None)
+        best_path = None
+        if sb and sb.get("spd") and len(sb["spd"]) >= NBINS:
+            paths = getattr(coach, "_lap_paths", {})
+            if paths:
+                key = min(paths, key=lambda k: abs(k - sb["time"]))
+                if abs(key - sb["time"]) < 0.05 and len(paths[key]) >= 20:
+                    best_path = paths[key]
+        if best_path:
+            bxy = [XY(q[0], -q[1]) for q in best_path]
+            fr = [0.0]
+            for a, b in zip(best_path, best_path[1:]):
+                fr.append(fr[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+            tot = fr[-1] or 1.0
+            spd = [sb["spd"][min(NBINS - 1, int((f / tot) * NBINS))]
+                   for f in fr]
+            vmin, vmax = min(spd), max(spd)
+            if vmax - vmin < 5.0:
+                vmax = vmin + 5.0
+            under = " ".join(f"{q[0]:.0f},{q[1]:.0f}" for q in bxy)
+            parts.append(f'<polyline points="{under}" fill="none" stroke="#222" '
+                         f'stroke-width="6.4" stroke-linejoin="round" '
+                         f'stroke-linecap="round"/>')
+            buckets = {}
+            for a, b, s in zip(bxy, bxy[1:], spd):
+                bk = int(((s - vmin) / (vmax - vmin)) * 23.99)
+                buckets.setdefault(bk, []).append(
+                    f"M{a[0]:.0f},{a[1]:.0f} L{b[0]:.0f},{b[1]:.0f}")
+            for bk in sorted(buckets):
+                d_attr = " ".join(buckets[bk])
+                parts.append(f'<path d="{d_attr}" fill="none" '
+                             f'stroke="{turbo(bk / 23.0)}" stroke-width="4.6" '
+                             f'stroke-linecap="round"/>')
+        # checkered S/F strip across the line at the outline start
+        sx, sy = oxy[0]
+        tx, ty = oxy[3][0] - sx, oxy[3][1] - sy
+        tl = math.hypot(tx, ty) or 1.0
+        tx, ty = tx / tl, ty / tl
+        nx, ny = -ty, tx
+        sq = 6.5
+        for ri in range(2):
+            for ci in range(4):
+                a0 = -2 * sq + ci * sq
+                t0 = -sq + ri * sq
+                cpt = [(sx + nx * a0 + tx * t0, sy + ny * a0 + ty * t0),
+                       (sx + nx * (a0 + sq) + tx * t0,
+                        sy + ny * (a0 + sq) + ty * t0),
+                       (sx + nx * (a0 + sq) + tx * (t0 + sq),
+                        sy + ny * (a0 + sq) + ty * (t0 + sq)),
+                       (sx + nx * a0 + tx * (t0 + sq),
+                        sy + ny * a0 + ty * (t0 + sq))]
+                cattr = " ".join(f"{q[0]:.0f},{q[1]:.0f}" for q in cpt)
+                fill = "#111" if (ri + ci) % 2 == 0 else "#ffffff"
+                parts.append(f'<polygon points="{cattr}" fill="{fill}" '
+                             f'stroke="#333" stroke-width="0.5"/>')
+        odx, ody = sx - cenx, sy - ceny
+        ol = math.hypot(odx, ody) or 1.0
+        parts.append(f'<text x="{sx + odx / ol * 27:.0f}" '
+                     f'y="{sy + ody / ol * 27 + 4:.0f}" font-size="13" '
+                     f'font-weight="bold" text-anchor="middle">S/F</text>')
         n = len(p.outline)
         for c, avg, _latest in stats:
             idx = int((c["apex_bin"] / NBINS) * (n - 1))
             mx, my = XY(xs[idx], ys[idx])
             col = loss_color(avg)
+            dx, dy = mx - cenx, my - ceny
+            dl = math.hypot(dx, dy) or 1.0
+            bx, by = mx + dx / dl * 30, my + dy / dl * 30
             parts.append(
-                f'<circle cx="{mx:.0f}" cy="{my:.0f}" r="13" fill="{col}" '
+                f'<line x1="{mx:.0f}" y1="{my:.0f}" x2="{bx:.0f}" '
+                f'y2="{by:.0f}" stroke="#444" stroke-width="1"/>'
+                f'<circle cx="{bx:.0f}" cy="{by:.0f}" r="13" fill="{col}" '
                 f'stroke="#fff" stroke-width="2.5"/>'
-                f'<text x="{mx:.0f}" y="{my + 5:.0f}" font-size="14" '
+                f'<text x="{bx:.0f}" y="{by + 5:.0f}" font-size="14" '
                 f'font-weight="bold" fill="#fff" text-anchor="middle">{int(c["num"])}</text>')
         parts.append("</svg>")
+        if best_path:
+            lo = int(round(vmin * 0.621371))
+            hi = int(round(vmax * 0.621371))
+            stops = ", ".join(f"{turbo(k / 7.0)} {k * 100 // 7}%"
+                              for k in range(8))
+            bt = sb["time"]
+            bt_s = f"{int(bt // 60)}:{bt - 60 * int(bt // 60):04.1f}"
+            parts.append(
+                '<div style="display:flex;align-items:center;gap:8px;'
+                'max-width:520px;margin:6px auto 0;font-size:12px">'
+                f'<span>{lo} mph</span>'
+                '<div style="flex:1;height:10px;border-radius:5px;'
+                f'background:linear-gradient(90deg,{stops})"></div>'
+                f'<span>{hi} mph</span></div>'
+                '<div style="text-align:center;font-size:12px;'
+                f'color:#555">speed on the session best lap ({bt_s}) — '
+                'its driven line over the reference line</div>')
         map_svg = "\n".join(parts)
     else:
         map_svg = "<p><i>No driven-line map captured this session.</i></p>"
