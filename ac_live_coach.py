@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.19.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.19.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -242,7 +242,7 @@ DEFAULT_CONFIG = {
     "brake_tone_lead_m": 0,       # fire the tone this many metres before the brake point
     "brake_tone_late_m": 25,      # v2.13.0: a tone held by a busy channel may still fire up to this many metres past the point
     "position_fallback": True,    # v2.13.0: when a track reports no spline position, coach by distance (lap timer + odometer)
-    "sass_level": 3,              # v2.14.0 spectrum, extended v2.19.0: -1 = super helpful & supportive, 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharp pools, 4 = mean girl (default 3 since v2.14.1, Albert's call)
+    "sass_level": 4,              # v2.14.0 spectrum, extended v2.19.0: -1 = super helpful & supportive, 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharp pools, 4 = mean girl (default 4 since v2.19.1, Albert's call)
     "talk_level": 1,              # v2.16.0: how much the coach talks: 2 = full, 1 = reduced (default), 0 = essentials only
 }
 

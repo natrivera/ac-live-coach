@@ -714,6 +714,8 @@ check("sass level clamps to -1..4",
               lambda *a, **k: None)._sass_level() == 4
       and m.Coach(dict(CFG, sass_level=-7), FakeSpeaker(),
                   lambda *a, **k: None)._sass_level() == -1)
+check("sass default is mean girl (v2.19.1, Albert's call)",
+      m.DEFAULT_CONFIG["sass_level"] == 4)
 check("sass eff: supportive survives talk 1, colour does not",
       _lvl_coach(-1, 1)._sass_eff() == -1
       and _lvl_coach(4, 1)._sass_eff() == 0
