@@ -102,11 +102,18 @@ the numbers behind it, are in there.
 
 ## Tuning knobs (coach_config.json)
 
+**Your file outranks the code.** Any line present in your
+`coach_config.json` wins over the built-in default for that key —
+including when a newer version changes a default. If the coach
+ever behaves as if a setting is stuck, check your file first: the
+values actually in force (and which ones your file pinned) are
+printed at startup and recorded in the session debrief.
+
 - `voice_engine` — `"piper"` (offline neural voice, default) or
   `"sapi"` (built-in Windows voices; also the automatic fallback if
   Piper is unavailable)
 - `piper_voice` — any Piper voice model name
-  (default `en_US-lessac-medium`); `piper_length_scale` is its rate
+  (default `en_US-lessac-high`); `piper_length_scale` is its rate
   (< 1 faster, > 1 slower)
 - `voice` / `voice_rate` — SAPI voice name fragment ("zira", "david")
   and speed when the SAPI engine is used
@@ -119,6 +126,12 @@ the numbers behind it, are in there.
 - `section_feedback` / `section_min_loss_s` — section callouts
 - `guide_spoken_tips` — speak each guided corner's first tip
   once per session (default off; see `guides/`)
+- `guide_symptom_tips` — when a data cue wins at a corner, let a
+  guide tip tagged for that symptom (and, for braking, that
+  direction) supply the wording (default on)
+- `guide_lap` — the guided lap: on the session's second lap (the
+  first with a clean reference in place) the coach reads the
+  track guide corner by corner instead of coaching (default on)
 - `brake_tone` — one short tone at the reference lap's brake
   point for each corner (default on; a training aid — corners
   the reference lap didn't brake for stay silent).
@@ -135,11 +148,12 @@ the numbers behind it, are in there.
   silent), 0 = essentials (approach ×3, exit ×1, summaries carry
   the lap time only). Stepping back is what keeps the voice
   channel free for the lines that are only true at one moment
-- `sass_level` — the coach's personality spectrum: 0 = pro,
+- `sass_level` — the coach's personality spectrum: -1 = super
+  helpful and supportive (notices real gains), 0 = pro,
   1 = lap summaries draw from dry variant pools,
   2 = repeat-offender and well-off-pace lines join in and exit
-  feedback gets its "again" forms, 3 = the sharpest pool entries
-  (default 3).
+  feedback gets its "again" forms, 3 = the sharp pools,
+  4 = mean girl (default 4).
   Sass never changes the numbers or the fixes, and never enters
   approach cues. The out-lap briefing's phrasing rotates at every
   level — same facts, varied frames
@@ -163,9 +177,41 @@ the numbers behind it, are in there.
 
 `python ac_live_coach.py --simulate` runs the coaching brain against a
 synthetic track with planted driving faults and prints what it would
-say.
+say. `python tests/run_tests.py` runs the unit suite.
+`python ac_live_coach.py --replay <session.jsonl>` re-runs a recorded
+session's frames through the coach, and
+`python tests/replay_regression.py` replays a pinned set of real
+sessions and checks their lap counts, bests and headline diagnoses
+against expectations — the regression net for coaching changes.
 
 ## Changelog
+
+### v2.24.0
+- **Coaching-accuracy pack** (from the Nov 6 self-audit): guide tips respect symptom direction (brake_later / brake_earlier tags; a brake-later tip can no longer be spoken against a braked-too-deep fault); merged coast cues are priced at the larger component instead of double-counting the coast; speech is booked when it is *heard*, not when queued — a dropped cue re-offers instead of suppressing itself, the exit budget is spent on playback, and its last slot is reserved for focus corners or leaks of 0.5 s+; exit lines wait until the car is clear of the next corner in a complex; brake/throttle bins are re-derived whenever a faster or cleaner lap replaces the reference; approach cues are diagnosed from the median of the last three clean laps, not one lap's noise; off-excuse streaks move only on counted laps; and biggest-leak ranking and history use *extended* loss — each corner charged through to the next corner's braking zone, so exit bleed down the straight is attributed instead of dropped.
+
+### v2.23.0
+- **Robustness pack** (from the Nov 6 self-audit): telemetry read failures are logged and the connection is rebuilt instead of retrying a dead handle in silence; an official lap time with no lap behind it is rejected instead of shifting every finish pairing after it; config values are sanitized at load (a typo'd number can no longer error every frame); profile saves are guarded and profile files are shape-validated on load; the speech queue is capped and a dead speech thread restarts itself; guide files drop non-object zones at load instead of erroring mid-lap; startup prints the settings actually in force and which ones your file pinned. Also: lap brake points use the detector's committed-onset rule (a pedal brush is no longer a brake point), a lap with an off is never announced as a new best, the guide re-validates after any remap, and a focus corner with no applicable fix no longer starves the cues behind it.
+
+### v2.22.1
+- The guided lap no longer goes quiet halfway: tour corners are judged against an anchor (the last handled corner's brake point) instead of raw modular distance, which consumed the back-half corners as "missed" in the lap's first seconds.
+
+### v2.22.0
+- The guided lap *replaces* coaching on that lap (Albert's design): no approach cues, exit feedback, symptom tips or spoken summary — the guide is read corner by corner, exclusively and queued, so every corner gets its line. It never runs on a reference-setting lap; a lap driven without a clean reference re-arms it for the next lap instead. Brake tones still fire, and the lap is still measured and can become the reference.
+
+### v2.21.1
+- History bookkeeping: Buttonwillow lap losses banked under the old "Riverside" zone name merge into "Bus Stop" on load, so the cross-session history line names the current map.
+
+### v2.21.0
+- The report map is the heatmap Albert prototyped: the session best lap's driven line is coloured by speed over the pale reference ribbon, corner badges sit off the line with leader lines, and a checkered strip marks start/finish, with an mph legend.
+
+### v2.20.0
+- The corrected Buttonwillow map is baked in: Bus Stop is a real zone, the Sweeper is split across Sweeper Entry and Sweeper Exit, and Riverside and the Esses — no braking zone in either — are report notes, not zones. The 13CW guide is reworked to match.
+
+### v2.19.0
+- Sass becomes a spectrum with two new ends: level -1 is a super-helpful supportive coach that notices gains of 0.2 s+ from the same exit budget, and level 4 is mean girl — backhanded personal-best lines and catty repeat/clean/off pools, aimed at the driving, never the driver. (v2.19.1 makes 4 the default.)
+
+### v2.18.0
+- The guided lap: on the session's second lap the coach reads the track guide corner by corner — one short line per corner, from the guide library — instead of data cues. (Superseded in behaviour by v2.22.0 above.)
 
 ### v2.17.0
 - **Layout isolation: layouts of one track folder no longer share per-layout data.** AC's shared memory names the track FOLDER, and several mods pack multiple circuits into one folder — the DDM Willow Springs mod (Streets, Big Willow, Horse Thief) and Nukedrop's Buttonwillow (classic layouts + The Circuit). Profiles were already separated by the v2.6.0 layout guard, but four things were still keyed by folder alone: (1) **track guides** — a Big Willow session would have loaded the Streets guide (or nothing at all); (2) **corner-name files** — the Streets names could label Big Willow corners whenever the counts happened to coincide; (3) **the shared corner map** — a fresh layout profile borrowed the main layout's geometry and adopted its length; (4) **Buttonwillow's built-in names**, whose canonical apex spans describe the classic layout only. Now a `__layoutNNNN` profile gets its own map file and names file (starter included), skips the built-in classic spans, and loads a **layout guide**: `<track>__layoutNNNN__guide.json` if one exists, else any guide for the folder declaring a `layout_length_m` within 3 % of the layout's measured length — and never the folder's guide, which describes a different circuit.
