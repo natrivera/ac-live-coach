@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.21.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.21.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2372,6 +2372,26 @@ class Coach:
                     h = json.load(f)
                 if isinstance(h, dict) and "corners" in h:
                     self.history = h
+                    # v2.21.1: one-time relabel, Buttonwillow only.
+                    # Zone 5's losses were banked as "Riverside"
+                    # before the Nov 5 map correction; that braking
+                    # zone is Bus Stop (Riverside is the unbraked
+                    # sweeper after it). Merge into any Bus Stop
+                    # entry so the 26 sessions of history survive
+                    # under the right name. Albert approved, Nov 6.
+                    if track_part == "nd_buttonwillow":
+                        hc = self.history.get("corners") or {}
+                        if "Riverside" in hc:
+                            old = hc.pop("Riverside")
+                            e = hc.setdefault("Bus Stop",
+                                              {"sum": 0.0, "n": 0})
+                            e["sum"] = round(float(e.get("sum", 0.0))
+                                             + float(old.get("sum", 0.0)), 3)
+                            e["n"] = (int(e.get("n", 0))
+                                      + int(old.get("n", 0)))
+                            self._save_history()
+                            print("[coach] history relabel: Riverside "
+                                  "-> Bus Stop (merged)")
         except Exception:
             pass
         if profile.ref is not None:

@@ -1149,6 +1149,31 @@ check("clean lap 2 completes the tour (no rearm)",
       dc.lap_number == 2 and dc._guide_tour_done
       and not dc._guide_tour_rearm)
 
+# ---- history relabel Riverside -> Bus Stop (v2.21.1) ----
+_hist = {"sessions": 26, "laps": 100,
+         "corners": {"Riverside": {"sum": 12.5, "n": 40},
+                     "Bus Stop": {"sum": 1.5, "n": 4},
+                     "Phil Hill": {"sum": 20.0, "n": 50}}}
+_hp = os.path.join(TMP, "nd_buttonwillow__carx__history.json")
+with open(_hp, "w", encoding="utf-8") as f:
+    json.dump(_hist, f)
+_hc, _hprof = new_coach("nd_buttonwillow__carx")
+_hcorners = _hc.history["corners"]
+check("history relabel merges Riverside into Bus Stop",
+      "Riverside" not in _hcorners
+      and _hcorners["Bus Stop"] == {"sum": 14.0, "n": 44}
+      and _hcorners["Phil Hill"] == {"sum": 20.0, "n": 50})
+with open(_hp, encoding="utf-8") as f:
+    _disk = json.load(f)
+check("history relabel persists to disk", "Riverside" not in _disk["corners"])
+_hp2 = os.path.join(TMP, "othertrack__car__history.json")
+with open(_hp2, "w", encoding="utf-8") as f:
+    json.dump({"sessions": 3, "laps": 9,
+               "corners": {"Riverside": {"sum": 3.0, "n": 7}}}, f)
+_oc, _oprof = new_coach("othertrack__car")
+check("history relabel leaves other tracks alone",
+      _oc.history["corners"].get("Riverside") == {"sum": 3.0, "n": 7})
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
