@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.22.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.22.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2103,6 +2103,7 @@ class Coach:
         self._guide_tour_rearm = False # v2.18.0: tour lap was muted; tour gets the next lap
         self._tour_corners = set()     # v2.18.0: corners the tour has handled this lap
         self._tour_this_lap = False    # v2.22.0: the lap in progress is the guided lap
+        self._tour_anchor_bin = 0      # v2.22.1: brake bin of the last handled tour corner
         self._last_summary_leak = None  # v2.14.0: last summary's biggest leak (num)
         self._exit_line_count = {}     # v2.14.0: exit lines spoken per corner, session
         self._exit_spoken = 0
@@ -2354,6 +2355,7 @@ class Coach:
         self._guide_tour_rearm = False
         self._tour_corners = set()
         self._tour_this_lap = False
+        self._tour_anchor_bin = 0
         if (profile.guide and profile.corners
                 and len((profile.guide.get("zones") or {}))
                 != len(profile.corners)):
@@ -3403,6 +3405,7 @@ class Coach:
     def reset_next_approach_state(self, reset_exit_budget=True):
         self.approach_fired = set()
         self._tour_corners = set()   # v2.18.0: the tour re-offers every corner each lap
+        self._tour_anchor_bin = 0      # v2.22.1: tour delta anchor resets with the corners
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
         self._tone_fired = set()
@@ -3716,17 +3719,56 @@ class Coach:
             line = guide_tour_line(guide, num)
             if not line:
                 self._tour_corners.add(num)
+                self._tour_anchor_bin = c["brake_bin"]
                 continue
             trig = (c["brake_bin"] - approach_bins) % NBINS
-            delta = (cur_bin - trig) % NBINS
-            if delta > NBINS // 2:
-                continue  # trigger not reached yet this lap
+            # v2.22.1: anchor the delta to the last handled
+            # corner's brake bin. Raw modular math cannot tell
+            # "more than half a lap ahead" from "long past the
+            # trigger" -- both give a mid-range delta -- so at
+            # lap start corners 6-9 read as long-past and were
+            # consumed as "missed" before the car ever reached
+            # them, and the guide went quiet about halfway
+            # (Albert, Nov 6). Anchored to the previous corner,
+            # the candidate's delta is unambiguous: consecutive
+            # corners are never half a lap apart.
+            anchor = self._tour_anchor_bin
+            brake_rel = (c["brake_bin"] - anchor) % NBINS
+            if brake_rel > NBINS - 250:
+                brake_rel -= NBINS  # brake point just behind anchor
+            trig_rel = brake_rel - approach_bins
+            car_rel = (cur_bin - anchor) % NBINS
+            if car_rel > NBINS - 250:
+                # Signed reading, same rule as the brake point:
+                # just behind the anchor (the car sits between a
+                # handled corner's trigger and its brake bin, or
+                # just before S/F) rather than almost a full lap
+                # past it.
+                car_rel -= NBINS
+            if car_rel < 0 and trig_rel > NBINS // 2:
+                # Degenerate state (teleport / mid-lap reset):
+                # the candidate is more than half a lap ahead of
+                # the anchor, so "just behind the anchor" cannot
+                # be the car's story -- read it as deep in the
+                # lap, which makes the early corners honestly
+                # missed instead of unreached.
+                car_rel += NBINS
+            delta = car_rel - trig_rel
+            if delta < 0:
+                # Not reached -- and STOP here: a later corner
+                # cannot be judged while this one is still ahead,
+                # because from the anchor its trigger is ambiguous
+                # (just behind the anchor vs most of a lap ahead).
+                # Handled outcomes (fired / missed / held) may
+                # chain; an unreached corner may not be skipped.
+                break
             dist_to_brake_m = ((c["brake_bin"] - cur_bin) % NBINS) * bin_m
             if delta * bin_m > 430.0 or dist_to_brake_m < 100.0:
                 # Past the eligible band, or past the drop point
                 # (the approach cues' own rules): a line now would
                 # land in the braking zone. Consumed, not spoken.
                 self._tour_corners.add(num)
+                self._tour_anchor_bin = c["brake_bin"]
                 self.log("guide_line_skipped",
                          {"num": num, "reason": "missed"})
                 continue
@@ -3738,6 +3780,7 @@ class Coach:
                 # v2.22.0 exclusive guided lap there are no data
                 # cues -- the guide owns every corner.)
                 self._tour_corners.add(num)
+                self._tour_anchor_bin = c["brake_bin"]
                 self.log("guide_line_skipped",
                          {"num": num, "reason": "cue"})
                 break
@@ -3745,6 +3788,7 @@ class Coach:
                 continue  # the speech gap may clear before the
                 # drop point; if not, the corner is consumed there
             self._tour_corners.add(num)
+            self._tour_anchor_bin = c["brake_bin"]
             if not exclusive and not self._speaker_idle():
                 self.log("guide_line_skipped",
                          {"num": num, "reason": "busy"})

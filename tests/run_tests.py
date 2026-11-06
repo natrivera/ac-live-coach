@@ -1216,6 +1216,24 @@ sc._finalize_lap(make_rec(), 102.0, "test")
 check("the lap after the guided lap is summarised again",
       len(sc.speaker.lines) > _n0)
 
+# ---- guided lap v2.22.1: far-ahead corners are not "missed" ----
+# Regression: unanchored modular deltas read a corner half a lap
+# ahead as long past its trigger, so corners 6-9 of 9 were consumed
+# as missed in the lap's first seconds and the guide stopped
+# reading about halfway (Albert, Nov 6).
+gw = tour_coach("testGW__car")
+gw.lap_number = 1
+gw._maybe_guide_tour(1000.0, 0.01)   # lap start: every corner ahead
+check("tour consumes nothing at lap start",
+      gw.speaker.lines == [] and gw._tour_corners == set())
+gw._maybe_guide_tour(1000.0, POS1)
+check("tour still fires corner 1 at its trigger",
+      gw.speaker.lines == ["Turn 1: power side one"])
+gw.last_spoke_t = -1000.0
+gw._maybe_guide_tour(1001.0, 1450 / m.NBINS)  # between corners 1 and 2
+check("tour does not consume corner 2 while it is still ahead",
+      gw._tour_corners == {1} and len(gw.speaker.lines) == 1)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
