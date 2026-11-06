@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.22.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.23.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -256,7 +256,76 @@ def load_config():
                 cfg.update(json.load(f))
         except Exception as e:
             print(f"[config] could not read coach_config.json ({e}); using defaults")
+    _sanitize_config(cfg)
     return cfg
+
+
+def _sanitize_config(cfg):
+    """v2.23.0: numeric/bool config values are coerced on the live
+    path (float(cfg[...]) inside per-frame code). One typo'd string
+    in a hand-edited coach_config.json used to raise every frame --
+    endless loop_errors and no coaching. Coerce what can be
+    coerced, restore the default for what can't, and say so."""
+    for key, default in DEFAULT_CONFIG.items():
+        if key not in cfg or default is None:
+            continue
+        val = cfg[key]
+        if isinstance(default, bool):
+            if not isinstance(val, bool):
+                print(f"[config] {key} should be true/false, got "
+                      f"{val!r}; using {default}")
+                cfg[key] = default
+        elif isinstance(default, (int, float)):
+            try:
+                cfg[key] = type(default)(float(val))
+            except (TypeError, ValueError):
+                print(f"[config] {key} should be a number, got "
+                      f"{val!r}; using {default}")
+                cfg[key] = default
+        elif isinstance(default, str):
+            if not isinstance(val, str):
+                print(f"[config] {key} should be text, got "
+                      f"{val!r}; using {default!r}")
+                cfg[key] = default
+
+
+def _profile_shape_ok(d):
+    """v2.23.0: a profile file can be valid JSON and still be the
+    wrong shape (hand edit, an old partial write): short trace
+    arrays or corner dicts missing keys used to load 'fine' and
+    then raise inside lap analysis on every finalize, with the
+    .bak fallback never triggered. Validate the shape so bad
+    files route through the existing backup -> fresh path."""
+    try:
+        if not isinstance(d, dict):
+            return False
+        if not float(d["track_length_m"]) > 0:
+            return False
+        for k in ("ref_spd", "ref_brk", "ref_gas"):
+            v = d[k]
+            if not isinstance(v, list) or len(v) != NBINS:
+                return False
+            if not all(isinstance(x, (int, float)) for x in v[:8]):
+                return False
+        for k in ("ref_hdg", "ref_str"):
+            v = d.get(k)
+            if v is not None and (not isinstance(v, list)
+                                  or len(v) != NBINS):
+                return False
+        corners = d["corners"]
+        if not isinstance(corners, list):
+            return False
+        for c in corners:
+            if not isinstance(c, dict):
+                return False
+            for b in ("brake_bin", "zone_start", "zone_end"):
+                if not (0 <= int(c[b]) < NBINS):
+                    return False
+            if not isinstance(c.get("name"), str):
+                return False
+        return True
+    except Exception:
+        return False
 
 
 # --------------------------------------------------------------------------
@@ -558,7 +627,7 @@ class Speaker:
     def __init__(self, cfg, log_fn):
         self.cfg = cfg
         self.log = log_fn
-        self.q = queue.Queue()
+        self.q = queue.Queue(maxsize=48)  # v2.23.0: capped (was unbounded)
         self._speaking = False
         self._tone_cache = {}
         self.enabled = bool(cfg.get("voice_enabled", True))
@@ -850,7 +919,11 @@ class Speaker:
                         self._play_tone()
                     except Exception:
                         pass
-                    self._speaking = False
+                    finally:
+                        # v2.23.0: in a finally -- a stuck _speaking
+                        # flag silently kills brake tones (via
+                        # tone_ready) while speech still works.
+                        self._speaking = False
                 continue
             if time.time() - ts > 15.0:
                 # A cue that waited >15 s in the queue is about a corner
@@ -871,7 +944,8 @@ class Speaker:
                     self._speak(text)
             except Exception:
                 pass
-            self._speaking = False
+            finally:
+                self._speaking = False
 
     def _purge_info(self):
         """Drop queued info lines (v2.16.0): a time-critical cue
@@ -905,7 +979,12 @@ class Speaker:
         if self.enabled:
             if kind == "cue":
                 self._purge_info()
-            self.q.put((time.time(), text, None, kind))
+            try:
+                self.q.put_nowait((time.time(), text, None, kind))
+            except queue.Full:
+                # v2.23.0: never block the driving loop on a full
+                # speech queue -- drop the line and say so.
+                print(f"  >> (speech queue full -- dropped: {text})")
 
     def say_clauses(self, a, b, gap_ms=220):
         """Speak two clauses with a real beat of silence between
@@ -919,11 +998,38 @@ class Speaker:
             pass
         print(f"  >> COACH: {text}")
         if self.enabled:
-            self.q.put((time.time(), text, (a, b, int(gap_ms)), "info"))
+            try:
+                self.q.put_nowait((time.time(), text,
+                                   (a, b, int(gap_ms)), "info"))
+            except queue.Full:
+                print(f"  >> (speech queue full -- dropped: {text})")
 
     # -- brake tone (v2.12.0) ------------------------------------------
 
+    def _check_thread(self):
+        """v2.23.0 watchdog: if the speech thread died (a blocked
+        or crashed playback), tones stop and cues pile into the
+        queue with nothing surfacing. Restart it, throttled, and
+        say so on the console."""
+        if not self.enabled or self._thread is None:
+            return
+        if self._thread.is_alive():
+            return
+        now = time.time()
+        if now - getattr(self, "_thread_warn_t", 0.0) < 10.0:
+            return
+        self._thread_warn_t = now
+        print("[voice] speech thread stopped -- restarting it")
+        try:
+            self.log("voice_thread_restart", {})
+        except Exception:
+            pass
+        self._speaking = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
     def tone_ready(self):
+        self._check_thread()
         """True when the audio channel is idle: nothing playing,
         nothing queued. A brake tone fired into a busy channel would
         land late or talk over a cue, so the coach drops it instead
@@ -932,7 +1038,10 @@ class Speaker:
 
     def tone(self):
         if self.enabled:
-            self.q.put((time.time(), "", ("__tone__",), "tone"))
+            try:
+                self.q.put_nowait((time.time(), "", ("__tone__",), "tone"))
+            except queue.Full:
+                pass  # a tone is only true at its moment anyway
 
     @staticmethod
     def _render_tone_wav(volume):
@@ -1421,10 +1530,27 @@ def _span_stats(lap_spd, lap_brk, lap_gas, lap_str, ref, z0, z1,
     lap_apex_v = min(lap_spd[max(0, apex_bin - win):apex_bin + win + 1])
 
     def brake_point(brk):
+        # v2.23.0: the same committed-onset rule the corner
+        # detector applies to the reference (_zone_from_apex):
+        # collect brake onsets, take the last one the pedal was
+        # HELD through (~18 m). The old first-touch scan read a
+        # check-up tap or a brush of the pedal as the brake
+        # point, producing 'brake later' deltas the driver
+        # hadn't earned.
+        sustain = max(3, int(18 / bin_m))
+        onsets = []
         for j in range(z0, apex_bin + 1):
-            if brk[j] > 0.08:
-                return j
-        return None
+            if brk[j] > 0.08 and (j == z0 or brk[j - 1] <= 0.08):
+                held = 0
+                k = j
+                while k <= apex_bin and brk[k] > 0.08:
+                    held += 1
+                    k += 1
+                onsets.append((j, held))
+        committed = [j for j, held in onsets if held >= sustain]
+        if committed:
+            return committed[-1]
+        return onsets[-1][0] if onsets else None
 
     lb = brake_point(lap_brk)
     brake_delta_m = None
@@ -1850,6 +1976,8 @@ class TrackProfile:
             try:
                 with open(self.path, "r", encoding="utf-8") as f:
                     d = json.load(f)
+                if not _profile_shape_ok(d):
+                    raise ValueError("profile shape invalid")
                 self.track_length_m = d["track_length_m"]
                 self.best_lap_s = d["best_lap_s"]
                 self.ref = {"spd": d["ref_spd"], "brk": d["ref_brk"], "gas": d["ref_gas"],
@@ -1867,6 +1995,8 @@ class TrackProfile:
                     try:
                         with open(bak, "r", encoding="utf-8") as f:
                             d = json.load(f)
+                        if not _profile_shape_ok(d):
+                            raise ValueError("profile shape invalid")
                         self.track_length_m = d["track_length_m"]
                         self.best_lap_s = d["best_lap_s"]
                         self.ref = {"spd": d["ref_spd"], "brk": d["ref_brk"], "gas": d["ref_gas"],
@@ -1900,6 +2030,17 @@ class TrackProfile:
         return os.path.join(TRACKS_DIR, self.key + "__history.json")
 
     def save(self):
+        # v2.23.0: a transient write failure (disk full, an AV or
+        # indexer lock on the .tmp/.bak on Windows) must not raise
+        # out of lap finalization -- the lap that triggered the
+        # save would be lost with it, announcement and all.
+        # _save_history already guards its write; this does too.
+        try:
+            self._save_inner()
+        except Exception as e:
+            print(f"[profile] could not save {self.key} ({e})")
+
+    def _save_inner(self):
         os.makedirs(TRACKS_DIR, exist_ok=True)
         d = {
             "track_length_m": self.track_length_m,
@@ -1979,6 +2120,10 @@ def _load_guide_for_profile(profile):
             try:
                 with open(os.path.join(base, fn), "r", encoding="utf-8") as f:
                     cand = json.load(f)
+                    if isinstance(cand, dict) and isinstance(cand.get("zones"), dict):
+                        for k in [k for k, v in cand["zones"].items()
+                                  if not isinstance(v, dict)]:
+                            del cand["zones"][k]
                 ll = float(cand.get("layout_length_m"))
                 if isinstance(cand.get("zones"), dict) and abs(ll - lay) / lay <= 0.03:
                     return cand
@@ -1999,6 +2144,16 @@ def _load_guide(track):
                 with open(path, "r", encoding="utf-8") as f:
                     g = json.load(f)
                 if isinstance(g, dict) and isinstance(g.get("zones"), dict):
+                    # v2.23.0: a zone stored as a string/list (a
+                    # hand-editing slip) used to raise inside the
+                    # live cue path on every frame. Drop bad zones
+                    # here, at load, and say so once.
+                    bad = [k for k, v in g["zones"].items()
+                           if not isinstance(v, dict)]
+                    for k in bad:
+                        print(f"[coach] guide {track}: zone {k} is "
+                              f"not an object -- dropped")
+                        del g["zones"][k]
                     return g
         except Exception:
             pass
@@ -2081,6 +2236,7 @@ class Coach:
         self.official_times = []     # settled official times, in lap order
         self._official_watch = None  # official time currently settling
         self._seen_completed = None  # last completedLaps value observed
+        self._last_finish_t = None   # v2.23.0: feed-time the last finish queued
         self._ict_peak_ms = 0        # peak iCurrentTime this lap (diagnostic)
         self.corner_history = {}   # num -> list of analyze dicts (recent laps)
         self._cue_memory = {}      # v2.8.0: num -> last approach cue {text, lap, loss}
@@ -2104,6 +2260,7 @@ class Coach:
         self._tour_corners = set()     # v2.18.0: corners the tour has handled this lap
         self._tour_this_lap = False    # v2.22.0: the lap in progress is the guided lap
         self._tour_anchor_bin = 0      # v2.22.1: brake bin of the last handled tour corner
+        self._guide_tipped = set()     # v2.23.0: was set_profile-only; a bare Coach fed first raised
         self._last_summary_leak = None  # v2.14.0: last summary's biggest leak (num)
         self._exit_line_count = {}     # v2.14.0: exit lines spoken per corner, session
         self._exit_spoken = 0
@@ -2330,8 +2487,30 @@ class Coach:
                   f"at {self.cfg.get('heading_split_deg', 20)} deg")
         return corners
 
+    def _revalidate_guide(self):
+        """v2.23.0: corners detected or remapped after the
+        profile loaded can change count under the guide; its
+        zones are keyed by number, so a mismatch would key tips
+        and tour lines to the wrong corners. Re-run the
+        set_profile zone-count guard."""
+        p = self.profile
+        if (p is not None and getattr(p, "guide", None) and p.corners
+                and len((p.guide.get("zones") or {})) != len(p.corners)):
+            print(f"[coach] track guide covers "
+                  f"{len(p.guide.get('zones') or {})} zones but the "
+                  f"map now has {len(p.corners)} -- ignoring it "
+                  f"until the counts match")
+            p.guide = None
+
     def set_profile(self, profile):
         self.profile = profile
+        # v2.23.0: a combo switch invalidates any in-flight lap
+        # pairing -- officials settled under the old combo must
+        # never pair with this one's finishes.
+        self.official_times = []
+        self._official_watch = None
+        self._seen_completed = None
+        self._last_finish_t = None
         if getattr(self, "_stamped_key", None) != profile.key:
             self._stamped_key = profile.key
             try:
@@ -2474,6 +2653,27 @@ class Coach:
             if t >= self._official_watch["deadline"]:
                 cand = self._official_watch["candidate_ms"]
                 if cand and cand > 0:
+                    # v2.23.0: an official with no lap behind it
+                    # (a replay watched mid-session also increments
+                    # completedLaps) must not enter the queue: FIFO
+                    # pairing would shift every later finish onto
+                    # the previous lap's time, all session. The cap
+                    # below only trims EXCESS; this rejects the
+                    # orphan itself. The distance fallback delays
+                    # finishes legitimately, so it is exempt.
+                    if (not self.pending_finishes
+                            and not self.official_times
+                            and self._fb_buf is None
+                            and (self._last_finish_t is None
+                                 or t - self._last_finish_t > 5.0)):
+                        print("[coach] official lap time with no "
+                              "matching lap -- ignored")
+                        try:
+                            self.log("official_orphan", {"ms": cand})
+                        except Exception:
+                            pass
+                        self._official_watch = None
+                        return
                     self.official_times.append(cand / 1000.0)
                     # Guard: if a finish was somehow never detected
                     # (crossing below the wrap speed threshold), don't
@@ -3136,6 +3336,7 @@ class Coach:
             "muted": bool(self._lap_muted),
             "tour": bool(self._tour_this_lap),
         })
+        self._last_finish_t = t
         self._ict_peak_ms = 0
         self.reset_lap()
         self.lap_start_t = t
@@ -3252,6 +3453,7 @@ class Coach:
                     p.corners = self._detect(p, rec)
                     self._apply_corner_names(p.corners)
                     self._apply_user_names(p.corners)
+                    self._revalidate_guide()
                 self.map_lap_s = lap_time
                 p.save()
                 print(f"[coach] reference set: {fmt_lap(lap_time)}, "
@@ -3337,7 +3539,11 @@ class Coach:
                     print(f"[lap] guided lap ({fmt_lap(lap_time)}) -- "
                           f"guide only, no summary")
                 else:
-                    self._speak_lap_summary(lap_time, results)
+                    self._speak_lap_summary(
+                        lap_time, results,
+                        blocked=("off" if rec.get("off_events")
+                                 else "penalty" if rec.get("penalty")
+                                 else None))
                 # v2.5.1: the report outline follows the latest
                 # CLEAN counted lap. It used to freeze on the first
                 # lap ever driven on the combo, so an exploratory
@@ -3391,6 +3597,7 @@ class Coach:
                         p.corners = self._detect(p, rec)
                         self._apply_corner_names(p.corners)
                         self._apply_user_names(p.corners)
+                        self._revalidate_guide()
                         self.map_borrowed_from = None
                         self.map_lap_s = lap_time
                         self.corner_history.clear()
@@ -3665,6 +3872,15 @@ class Coach:
                     self._cue_memory[num] = {
                         "text": cue, "lap": self.lap_number,
                         "loss": latest["loss"]}
+            else:
+                # v2.23.0: the corner qualified on average loss
+                # but its latest lap has no applicable fix. It
+                # used to end the scan here (the break below),
+                # starving actionable cues behind it in
+                # overlapping windows. Mark it handled for this
+                # lap and move on to the next focus corner.
+                self.approach_fired.add(num)
+                continue
             break
 
     def _speaker_idle(self):
@@ -4081,7 +4297,7 @@ class Coach:
         self._sass_rot[site] = i + 1
         return pool[i % len(pool)]
 
-    def _speak_lap_summary(self, lap_time, results):
+    def _speak_lap_summary(self, lap_time, results, blocked=None):
         p = self.profile
         sass = self._sass_eff()
         parts = [f"Lap {fmt_lap_spoken(lap_time)}."]
@@ -4109,7 +4325,16 @@ class Coach:
                 else:
                     parts.append(f"{d:.1f} off your best.")
             else:
-                if sass == -1:
+                if blocked:
+                    # v2.23.0: the summary runs BEFORE the off /
+                    # penalty verdict in _finalize_lap, so a faster
+                    # blocked lap used to be announced as a new
+                    # best and then un-announced. It isn't one.
+                    parts.append("That doesn't count — it had "
+                                 "an off." if blocked == "off" else
+                                 "That doesn't count — it carried "
+                                 "a penalty.")
+                elif sass == -1:
                     parts.append(self._sass_pick("summary_pb", [
                         "That's a new best — beautiful lap.",
                         "New best! That's the work paying off.",
@@ -4288,6 +4513,9 @@ def make_logger():
                      f"| track {fmt_track_len(data.get('track_length_m'))}\n")
         elif event == "cue":
             tf.write(f"  >> {data['text']}\n")
+        elif event == "config_in_force":
+            tf.write("Settings in force: " + ", ".join(
+                f"{k}={v!r}" for k, v in data.items()) + "\n")
         elif event == "lap":
             tf.write(f"Lap {data['lap']}: {fmt_lap(data['time_s'])} "
                      f"(corner losses total {data['total_corner_loss']:.2f}s)\n")
@@ -4775,6 +5003,30 @@ def run_live(cfg):
         # while still in the pits, not three laps in.
         speaker.say("Voice check. Coach is live.")
     print(f"AC Live Coach v{VERSION}")
+    # v2.23.0: print which behavior settings are actually in
+    # force, and which of them his config file pinned. The
+    # brake-tone class of bug (a stale local line silently
+    # outranking a new default) stayed invisible for a day
+    # precisely because nothing ever showed this.
+    _keys = ("talk_level", "sass_level", "brake_tone", "guide_lap",
+             "guide_spoken_tips", "focus", "voice_engine",
+             "piper_voice", "max_approach_cues_per_lap")
+    _file_keys = set()
+    try:
+        _p = os.path.join(APP_DIR, "coach_config.json")
+        if os.path.exists(_p):
+            with open(_p, "r", encoding="utf-8") as _f:
+                _file_keys = set(json.load(_f))
+    except Exception:
+        pass
+    _in_force = {k: cfg.get(k) for k in _keys if k in cfg}
+    print("[config] in force: " + ", ".join(
+        f"{k}={v!r}" + (" (from your file)" if k in _file_keys else "")
+        for k, v in _in_force.items()))
+    try:
+        log("config_in_force", _in_force)
+    except Exception:
+        pass
     resolve_tracks_dir(cfg)
     print(f"Session log: {jsonl_path}")
     print(f"Debrief:     {txt_path}")
@@ -4829,6 +5081,7 @@ def run_live(cfg):
     frame_no = 0
     hint_warned = False
     last_static_check = 0.0
+    tele_failures = 0        # v2.23.0: consecutive telemetry read failures
     loop_errors = 0
     last_loop_error_log = 0.0
     try:
@@ -4848,7 +5101,22 @@ def run_live(cfg):
             try:
                 phys = tele.physics()
                 gfx = tele.graphics()
+                tele_failures = 0
             except Exception:
+                # v2.23.0: this used to retry the same handle
+                # forever in silence -- if the shared-memory handle
+                # went bad (game restart), the coach looked
+                # 'running but quiet' for the rest of the session.
+                # Log it, and after ~7 s of failures drop the
+                # handle so the connect path builds a fresh one.
+                tele_failures += 1
+                if tele_failures == 1 or tele_failures % 100 == 0:
+                    print(f"[coach] telemetry read failing "
+                          f"({tele_failures}x) -- will reconnect")
+                if tele_failures >= 150:
+                    print("[coach] telemetry lost -- reconnecting")
+                    tele = None
+                    tele_failures = 0
                 time.sleep(0.05)
                 continue
             cur_compound = (gfx.tyreCompound or "").strip()

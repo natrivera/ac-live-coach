@@ -1234,6 +1234,89 @@ gw._maybe_guide_tour(1001.0, 1450 / m.NBINS)  # between corners 1 and 2
 check("tour does not consume corner 2 while it is still ahead",
       gw._tour_corners == {1} and len(gw.speaker.lines) == 1)
 
+# ---- v2.23.0 robustness pack ----
+_cfg = dict(m.DEFAULT_CONFIG)
+_cfg["cue_cooldown_s"] = "6"
+_cfg["sass_level"] = "loud"
+m._sanitize_config(_cfg)
+check("config: numeric strings are coerced",
+      _cfg["cue_cooldown_s"] == 6.0)
+check("config: garbage values fall back to the default",
+      _cfg["sass_level"] == m.DEFAULT_CONFIG["sass_level"])
+_good = {"track_length_m": 4406.0,
+         "ref_spd": [100.0] * m.NBINS, "ref_brk": [0.0] * m.NBINS,
+         "ref_gas": [1.0] * m.NBINS,
+         "corners": [{"name": "Turn 1", "brake_bin": 10,
+                      "zone_start": 5, "zone_end": 20}]}
+check("profile shape: a well-formed profile passes",
+      m._profile_shape_ok(_good))
+_bad = dict(_good); _bad["ref_spd"] = [100.0] * 100
+check("profile shape: a short trace is rejected",
+      not m._profile_shape_ok(_bad))
+_bad2 = dict(_good); _bad2["corners"] = [{"name": "Turn 1"}]
+check("profile shape: a corner missing bins is rejected",
+      not m._profile_shape_ok(_bad2))
+oc, _op = new_coach("testOC__car")
+oc.observe_official(3, 100000, 1000.0)   # baseline
+oc.observe_official(4, 100000, 1000.1)   # increment opens the watch
+oc.observe_official(4, 100000, 1002.0)   # settles with no lap behind it
+check("official with no matching lap is dropped as an orphan",
+      oc.official_times == [])
+oc._last_finish_t = 1002.0
+oc.observe_official(5, 101000, 1002.1)
+oc.observe_official(5, 101000, 1004.0)
+check("official behind a recent finish is kept",
+      oc.official_times == [101.0])
+_zp = os.path.join(TMP, "zonetest__guide.json")
+with open(_zp, "w", encoding="utf-8") as f:
+    json.dump({"zones": {"1": {"name": "A"}, "2": "oops"}}, f)
+_zg = m._load_guide("zonetest")
+check("guide load drops a non-object zone",
+      _zg is not None and set(_zg["zones"]) == {"1"})
+rc, _rp = new_coach("testRC__car")
+_rp.corners = [{"num": 1, "name": "A"}, {"num": 2, "name": "B"}]
+_rp.guide = {"zones": {"1": {}, "2": {}, "3": {}}}
+rc._revalidate_guide()
+check("guide is dropped when a remap changes the zone count",
+      _rp.guide is None)
+pb, _pp = new_coach("testPB__car")
+pb._finalize_lap(make_rec(), 100.0, "test")
+pb._finalize_lap(make_rec(), 101.0, "test")
+_n1 = len(pb.speaker.lines)
+pb._finalize_lap(make_rec(off_events=[{"bins": {970}, "dur_s": 1.2,
+                                       "max_tyres": 3}]), 99.0, "test")
+_pb_lines = pb.speaker.lines[_n1:]
+check("a faster lap with an off is not announced as a new best",
+      not any("new best" in s.lower() for s in _pb_lines)
+      and any("doesn't count" in s for s in _pb_lines))
+_ns = [0.0] * m.NBINS
+_nb = [0.0] * m.NBINS
+for j in range(950, 952):
+    _nb[j] = 0.5            # a two-bin check-up tap
+for j in range(1000, 1051):
+    _nb[j] = 0.9            # the committed stop
+_ng = [1.0] * m.NBINS
+_nspd = [150.0] * m.NBINS
+_ref = {"spd": _nspd, "brk": _nb, "gas": _ng}
+_st = m._span_stats(_nspd, _nb, _ng, _ns, _ref, 900, 1100, 1050,
+                    1000, 1090, 80.0, 2.2)
+check("brake point ignores a check-up tap",
+      _st["brake_delta_m"] == 0.0)
+fc, _fp = new_coach("testFC__car")
+_fp.corners = [
+    {"num": 1, "name": "Turn A", "zone_start": 1290, "zone_end": 1310,
+     "brake_bin": 1300, "apex_bin": 1305, "has_brake_zone": True},
+    {"num": 2, "name": "Turn B", "zone_start": 1440, "zone_end": 1460,
+     "brake_bin": 1450, "apex_bin": 1455, "has_brake_zone": True}]
+_a = dict(BASE, name="Turn A", loss=0.7, off=False)
+_b = dict(BASE, name="Turn B", loss=0.6, off=False, coast_s=0.9)
+fc.corner_history = {1: [_a], 2: [_b]}
+fc.lap_number = 1
+fc.last_spoke_t = -1000.0
+fc._maybe_approach_cue(1000.0, 1350 / m.NBINS)
+check("a no-cue focus corner does not starve the next one",
+      any(s.startswith("Turn B") for s in fc.speaker.lines))
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
