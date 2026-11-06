@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.19.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.20.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2145,24 +2145,28 @@ class Coach:
     # Names for the Buttonwillow seven-zone map, as corrected by
     # Albert himself on Nov 1 (he drove it; two assistant attempts
     # from GPS alignment were wrong because the Dragy GPS outline
-    # renders mirror-flipped). His identifications, verbatim sense:
-    # 2 is the Off Ramp, 3 is Cotton Corners, 4 is going into
-    # Riverside, 5 is after Phil Hill, 6 is after the Sweeper going
-    # into the Esses, 7 is the main straight with Sunset the turn
-    # before it, and Sunrise/Sunset sit opposite to the v1.5.1 guess.
+    # renders mirror-flipped) and corrected again Nov 5 2026
+    # against his session report: the span after Cotton Corners is
+    # Bus Stop (Riverside is the unzoned sweeper after it), and
+    # the Sweeper span's single zone is the Sweeper itself.
     # Applied only when detection finds exactly this layout; any
     # other corner count keeps Turn N.
     BUTTONWILLOW_7 = {1: "Sunrise", 2: "Off Ramp", 3: "Cotton Corners",
-                      4: "Riverside Entry", 5: "Phil Hill Exit",
-                      6: "Esses Entry", 7: "Sunset"}
+                      4: "Bus Stop", 5: "Phil Hill",
+                      6: "Sweeper", 7: "Sunset"}
 
-    # Canonical Buttonwillow layout, from Albert's own stored map
-    # (apex fractions of the seven places he named). v2.0's fine
-    # maps name a detected corner by which canonical span its apex
-    # falls in, so a 9- or 12-zone map still gets his names.
-    BW_CANON_APEX = [0.061, 0.139, 0.251, 0.423, 0.627, 0.757, 0.958]
-    BW_CANON_NAMES = ["Sunrise", "Off Ramp", "Cotton Corners", "Riverside",
-                      "Phil Hill", None, "Sunset"]  # span 6: Sweeper/Esses
+    # Canonical Buttonwillow layout, from Albert's own stored map.
+    # v2.0's fine maps name a detected corner by which canonical
+    # span its apex falls in, so a 9- or 12-zone map still gets
+    # his names. Apex fractions re-measured Nov 5 2026 from his
+    # session report's own map (Sunset's apex is at 0.939, not the
+    # 0.958 the first stored map carried). Span 3 is Bus Stop --
+    # Riverside, the big sweeper after it, has no braking zone
+    # and has never been a detected zone; span 5 is the Sweeper
+    # complex (the Esses after it are likewise unzoned).
+    BW_CANON_APEX = [0.067, 0.137, 0.254, 0.418, 0.631, 0.757, 0.939]
+    BW_CANON_NAMES = ["Sunrise", "Off Ramp", "Cotton Corners", "Bus Stop",
+                      "Phil Hill", None, "Sunset"]  # span 6: the Sweeper
     # Long corners Albert wants coached in phases (Nov 1: "entry to
     # Phil Hill, top of the hill is Phil Hill, exit to Phil Hill";
     # same split for Riverside and the Sweeper). The zone keeps the
@@ -2222,14 +2226,16 @@ class Coach:
             base = self.BW_CANON_NAMES[span]
             if span == 5:
                 if len(group) == 1:
-                    names = ["Esses Entry"]
+                    names = ["Sweeper"]
                 elif len(group) == 2:
-                    names = ["Sweeper", "Esses"]
+                    names = ["Sweeper Entry", "Sweeper Exit"]
                 else:
-                    # Albert's fine map (Nov 1): the Sweeper resolves
-                    # into its entrance and its heart as separate
-                    # dips, and the Esses only start after them.
-                    names = (["Sweeper Entry", "Sweeper", "Esses"]
+                    # Albert's map, corrected Nov 5 2026: the
+                    # Sweeper resolves into its entry and its exit
+                    # as separate zones, and the Esses only start
+                    # after them -- a third dip in this span is the
+                    # first Esses braking point, not more Sweeper.
+                    names = (["Sweeper Entry", "Sweeper Exit", "Esses"]
                              + [f"Esses {k}" for k in range(2, len(group) - 1)])
             elif base == "Cotton Corners" and len(group) > 1:
                 names = [f"Cotton Corners {k}" for k in range(1, len(group) + 1)]

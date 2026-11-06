@@ -800,6 +800,48 @@ check("pro voice: gains stay silent at sass 0",
               for ln in _gc0.speaker.lines),
       f"got {_gc0.speaker.lines}")
 
+# ---- Buttonwillow map corrected (v2.20.0, Albert Nov 5 2026) ----
+def _bw_coach():
+    c = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+    pr = m.TrackProfile("nd_buttonwillow__testcar")
+    c.set_profile(pr)
+    pr.track_length_m = 4406.0
+    return c
+
+def _corner(num, frac):
+    b = int(frac * m.NBINS)
+    return {"num": num, "name": f"Turn {num}", "apex_bin": b,
+            "zone_start": max(0, b - 60), "zone_end": b + 60,
+            "brake_bin": b - 30, "throttle_bin": b + 30,
+            "apex_speed_kmh": 90.0, "has_brake_zone": True, "phases": None}
+
+_bw = _bw_coach()
+_fracs9 = [0.067, 0.137, 0.225, 0.265, 0.418, 0.631, 0.733, 0.760, 0.939]
+_cs9 = [_corner(i + 1, f) for i, f in enumerate(_fracs9)]
+_bw._apply_corner_names(_cs9)
+check("BW 9-zone map: Bus Stop at 5, Sweeper Entry/Exit at 7/8",
+      [c["name"] for c in _cs9] == [
+          "Sunrise", "Off Ramp", "Cotton Corners 1", "Cotton Corners 2",
+          "Bus Stop", "Phil Hill", "Sweeper Entry", "Sweeper Exit",
+          "Sunset"],
+      f"got {[c['name'] for c in _cs9]}")
+_bw7 = _bw_coach()
+_cs7 = [_corner(i + 1, f) for i, f in enumerate(
+    [0.067, 0.137, 0.254, 0.418, 0.631, 0.757, 0.939])]
+_bw7._apply_corner_names(_cs7)
+check("BW 7-zone map: Bus Stop / Phil Hill / Sweeper / Sunset",
+      [c["name"] for c in _cs7] == [
+          "Sunrise", "Off Ramp", "Cotton Corners", "Bus Stop",
+          "Phil Hill", "Sweeper", "Sunset"],
+      f"got {[c['name'] for c in _cs7]}")
+_bw3 = _bw_coach()
+_cs3 = [_corner(i + 1, f) for i, f in enumerate(
+    [0.067, 0.137, 0.225, 0.265, 0.418, 0.631, 0.733, 0.760, 0.830, 0.939])]
+_bw3._apply_corner_names(_cs3)
+check("BW span-5 third dip is the Esses, after Sweeper Exit",
+      _cs3[8]["name"] == "Esses" and _cs3[7]["name"] == "Sweeper Exit",
+      f"got {[c['name'] for c in _cs3]}")
+
 # ---- bin interpolation rescues slow feeds (v2.16.3) ----
 _lb = m.LapBins()
 _lb.add(0.1000, 100.0, 0.0, 0.5)   # bin 200
