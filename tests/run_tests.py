@@ -880,6 +880,132 @@ check("shipped guide binds: Circuit by length",
           _StubProfile("nd_buttonwillow__car__layout4130"))
        or {}).get("layout_length_m") == 4131)
 
+# ---- guided lap (v2.18.0) ----
+# Albert's idea: on the session's second lap the coach reads the
+# track guide corner by corner -- one short line per corner, lowest
+# speech priority, skipped rather than spoken late.
+GUIDE_T = {"track": "test", "zones": {
+    "1": {"name": "Turn 1", "priority": "exit", "tips": [
+        {"text": "brake side one", "trigger": "brake"},
+        "plain one",
+        {"text": "power side one", "trigger": "power"}]},
+    "2": {"name": "Turn 2", "priority": "entry", "tips": [
+        {"text": "power side two", "trigger": "power"},
+        {"text": "brake side two", "trigger": "brake"}]},
+    "3": {"name": "Turn 3", "priority": "balanced", "tips": [
+        {"text": "trig three", "trigger": "coast"}, "plain three"]},
+    "4": {"name": "Turn 4", "priority": "exit", "tips": []}}}
+check("tour line: exit priority picks the power tip",
+      m.guide_tour_line(GUIDE_T, 1) == "power side one")
+check("tour line: entry priority picks the brake tip",
+      m.guide_tour_line(GUIDE_T, 2) == "brake side two")
+check("tour line: balanced falls back to the first plain tip",
+      m.guide_tour_line(GUIDE_T, 3) == "plain three")
+check("tour line: no zone / no tips -> None",
+      m.guide_tour_line(GUIDE_T, 9) is None
+      and m.guide_tour_line(GUIDE_T, 4) is None
+      and m.guide_tour_line(None, 1) is None)
+
+
+def tour_coach(key, **cfgkw):
+    c, p = new_coach(key)
+    if cfgkw:
+        c.cfg = dict(CFG, **cfgkw)
+    p.track_length_m = 4406.0
+    p.corners = [
+        {"num": 1, "name": "Turn 1", "zone_start": 1250, "zone_end": 1380,
+         "brake_bin": 1300},
+        {"num": 2, "name": "Turn 2", "zone_start": 1650, "zone_end": 1800,
+         "brake_bin": 1700},
+        {"num": 3, "name": "Turn 3", "zone_start": 1850, "zone_end": 1990,
+         "brake_bin": 1900},
+    ]
+    p.guide = GUIDE_T
+    c.last_spoke_t = -1000.0
+    return c
+
+
+_ab = int(CFG["approach_distance_m"] / (4406.0 / m.NBINS))
+POS1 = (1300 - _ab + 3) / m.NBINS   # inside corner 1's tour window
+POS2 = (1700 - _ab + 3) / m.NBINS   # inside corner 2's tour window
+
+gc = tour_coach("testG__car")
+gc._maybe_guide_tour(1000.0, POS1)
+check("tour silent on lap 1 (no reference yet)", gc.speaker.lines == [])
+gc.lap_number = 1
+gc._maybe_guide_tour(1000.0, POS1)
+check("tour speaks corner 1 on lap 2",
+      gc.speaker.lines == ["Turn 1: power side one"])
+gc._maybe_guide_tour(1001.0, POS1)
+check("tour does not repeat a corner", len(gc.speaker.lines) == 1)
+gc.last_spoke_t = -1000.0
+gc._maybe_guide_tour(1002.0, POS2)
+check("tour speaks corner 2 on lap 2",
+      gc.speaker.lines[-1] == "Turn 2: brake side two")
+gc.lap_number = 2
+gc._tour_corners = set(); gc.last_spoke_t = -1000.0
+gc._maybe_guide_tour(1003.0, POS1)
+check("tour silent on lap 3 without a rearm", len(gc.speaker.lines) == 2)
+
+gc2 = tour_coach("testG2__car")
+gc2.lap_number = 1
+gc2.speaker.busy = True
+gc2._maybe_guide_tour(1000.0, POS1)
+gc2.speaker.busy = False
+gc2._maybe_guide_tour(1000.5, POS1)
+check("tour skips a busy corner instead of speaking late",
+      gc2.speaker.lines == [])
+
+gc3 = tour_coach("testG3__car")
+gc3.lap_number = 1
+gc3.approach_fired.add(1)
+gc3._maybe_guide_tour(1000.0, POS1)
+check("tour yields a corner to a data approach cue",
+      gc3.speaker.lines == [])
+
+gc4 = tour_coach("testG4__car", talk_level=0)
+gc4.lap_number = 1
+gc4._maybe_guide_tour(1000.0, POS1)
+check("tour silent at talk_level 0", gc4.speaker.lines == [])
+gc5 = tour_coach("testG5__car", guide_lap=False)
+gc5.lap_number = 1
+gc5._maybe_guide_tour(1000.0, POS1)
+check("tour silent with guide_lap off", gc5.speaker.lines == [])
+
+# Corner 3's trigger (brake 1900 - approach) sits inside Turn 2's
+# zone: the line must hold while mid-corner, then fire once clear
+# with >=100 m still to run -- the approach cues' geometry, learned
+# from the first replay, where a tight 25 m window inside the
+# previous zone consumed every corner as "missed".
+gc6 = tour_coach("testG6__car")
+gc6.lap_number = 1
+gc6._maybe_guide_tour(1000.0, 1790 / m.NBINS)   # in zone 2, past T3's trigger
+check("tour holds a line while mid-corner", gc6.speaker.lines == [])
+gc6.last_spoke_t = -1000.0
+gc6._maybe_guide_tour(1001.0, 1810 / m.NBINS)   # clear of zone 2
+check("tour fires once clear of the previous corner",
+      gc6.speaker.lines == ["Turn 3: plain three"])
+
+bc, _bp = new_coach("testB__car")
+bc._finalize_lap(make_rec(), 100.0, "test")
+check("tour armed after lap 1", bc.lap_number == 1
+      and not bc._guide_tour_done and bc._guide_tour_active())
+_rec_m = make_rec(); _rec_m["muted"] = True
+bc._finalize_lap(_rec_m, 102.0, "test")
+check("muted tour lap re-arms the tour for lap 3",
+      bc.lap_number == 2 and bc._guide_tour_rearm
+      and not bc._guide_tour_done and bc._guide_tour_active())
+bc._finalize_lap(make_rec(), 101.0, "test")
+check("tour closes after the re-armed lap",
+      bc.lap_number == 3 and bc._guide_tour_done
+      and not bc._guide_tour_active())
+dc, _dp = new_coach("testD__car")
+dc._finalize_lap(make_rec(), 100.0, "test")
+dc._finalize_lap(make_rec(), 101.0, "test")
+check("clean lap 2 completes the tour (no rearm)",
+      dc.lap_number == 2 and dc._guide_tour_done
+      and not dc._guide_tour_rearm)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

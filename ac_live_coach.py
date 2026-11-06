@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.17.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.18.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -233,6 +233,7 @@ DEFAULT_CONFIG = {
     "focus": "all",               # v2.1.0: "brake" = brake-coaching mode, approach cues give braking fixes only
     "guide_spoken_tips": False,   # v2.3: speak track-guide tips aloud (once per corner per session); the guide always feeds the report and cue priority
     "guide_symptom_tips": True,   # v2.4: when a data cue fires, a guide tip tagged with the same symptom replaces the generic wording
+    "guide_lap": True,            # v2.18.0: on the session's second lap, speak one short guide line per guided corner (lowest speech priority; off at talk_level 0)
     "section_feedback": True,     # v2.1.0: one line per track section when its small losses add up
     "section_min_loss_s": 0.45,   # section total that earns a section line
     "expected_track_hint": "buttonwillow",  # soft check only; app runs anywhere
@@ -2036,6 +2037,31 @@ def guide_tip_for(guide, num, kind):
     return None
 
 
+def guide_tour_line(guide, num):
+    """The one line the guided lap (v2.18.0) speaks for a corner:
+    the tip that matches the zone's priority -- braking side for
+    entry corners, power side for exit corners -- else the first
+    plain tip, else the first tip. Pacenote-length by construction:
+    guide tips are authored short; the zone's character prose stays
+    in the report where it belongs."""
+    z = guide_zone(guide, num)
+    if not z:
+        return None
+    tips = z.get("tips") or []
+    if not tips:
+        return None
+    want = {"entry": "brake", "exit": "power"}.get(
+        (z.get("priority") or "").lower())
+    if want:
+        for tip in tips:
+            if tip_trigger(tip) == want:
+                return tip_text(tip)
+    for tip in tips:
+        if isinstance(tip, str):
+            return tip
+    return tip_text(tips[0])
+
+
 class Coach:
     """The coaching brain. Feed it samples; it speaks through the Speaker."""
 
@@ -2071,6 +2097,9 @@ class Coach:
         self._tone_fired = set()
         self._tone_pending = None      # v2.13.0: brake tone held for a busy channel
         self._sass_rot = {}            # v2.14.0: sass pool rotation, per site
+        self._guide_tour_done = False  # v2.18.0: guided lap finished (set_profile re-arms)
+        self._guide_tour_rearm = False # v2.18.0: tour lap was muted; tour gets the next lap
+        self._tour_corners = set()     # v2.18.0: corners the tour has handled this lap
         self._last_summary_leak = None  # v2.14.0: last summary's biggest leak (num)
         self._exit_line_count = {}     # v2.14.0: exit lines spoken per corner, session
         self._exit_spoken = 0
@@ -2309,6 +2338,12 @@ class Coach:
         track_part = profile.key.split("__", 1)[0]
         profile.guide = _load_guide_for_profile(profile)
         self._guide_tipped = set()
+        # v2.18.0 guided-lap state: a fresh profile means a fresh
+        # session for the tour. (The layout switch re-enters here on
+        # lap 1, before the tour can have run -- harmless.)
+        self._guide_tour_done = False
+        self._guide_tour_rearm = False
+        self._tour_corners = set()
         if (profile.guide and profile.corners
                 and len((profile.guide.get("zones") or {}))
                 != len(profile.corners)):
@@ -2965,6 +3000,7 @@ class Coach:
                 self._service_tone_pending(t, pos)
                 self._maybe_brake_tone(t, pos)
                 self._maybe_approach_cue(t, pos)
+                self._maybe_guide_tour(t, pos)
                 self._maybe_guide_tip(t, pos)
                 self._maybe_exit_feedback(t, pos)
 
@@ -3084,6 +3120,22 @@ class Coach:
 
     def _finalize_lap(self, rec, lap_time, source):
         self.lap_number += 1
+        # v2.18.0 guided-lap bookkeeping: the tour runs on the lap
+        # in progress while lap_number == 1 (the session's second
+        # lap). A discarded lap never finalizes, so the tour simply
+        # re-offers on the next lap. A MUTED lap (out lap after a
+        # stop/reset) does finalize without the tour ever having a
+        # chance to speak -- re-arm it for one more lap rather than
+        # losing the tour for the whole session.
+        if not self._guide_tour_done:
+            if self.lap_number == 2:
+                if rec.get("muted"):
+                    self._guide_tour_rearm = True
+                else:
+                    self._guide_tour_done = True
+            elif self.lap_number >= 3 and self._guide_tour_rearm:
+                self._guide_tour_rearm = False
+                self._guide_tour_done = True
         spd, brk, gas = rec["spd"], rec["brk"], rec["gas"]
         dist = rec["dist_m"]
         p = self.profile
@@ -3283,6 +3335,7 @@ class Coach:
 
     def reset_next_approach_state(self, reset_exit_budget=True):
         self.approach_fired = set()
+        self._tour_corners = set()   # v2.18.0: the tour re-offers every corner each lap
         self.exit_fired = set()
         self.approach_cues_this_lap = 0
         self._tone_fired = set()
@@ -3544,6 +3597,98 @@ class Coach:
                         "loss": latest["loss"]}
             break
 
+    def _speaker_idle(self):
+        """True when the audio channel can start a line NOW:
+        nothing speaking, nothing queued. Speakers without the
+        probe (test doubles) count as idle."""
+        probe = getattr(self.speaker, "tone_ready", None)
+        return bool(probe()) if callable(probe) else True
+
+    def _guide_tour_active(self):
+        """v2.18.0: is the lap in progress the guided lap? The
+        tour runs on the session's second lap (lap_number == 1
+        while it is being driven), or on the third when the second
+        was a muted out lap and the tour was re-armed at finalize.
+        Config off, or talk_level 0 (essentials only), silences
+        it entirely."""
+        if not self.cfg.get("guide_lap", True):
+            return False
+        if self._talk_level() == 0:
+            return False
+        if self._guide_tour_done:
+            return False
+        if self.lap_number == 1:
+            return True
+        return bool(self._guide_tour_rearm and self.lap_number == 2)
+
+    def _maybe_guide_tour(self, t, pos):
+        # v2.18.0 guided lap (Albert's idea, Nov 5 2026): on the
+        # tour lap, speak ONE short guide line per guided corner
+        # as the car approaches it -- the human-coach knowledge up
+        # front, on the first flying lap, before his own data
+        # takes over. Deliberately the LOWEST speech priority in
+        # the coach: lines go out as kind="info" (any real cue
+        # purges a waiting one), they are only offered when the
+        # audio channel is completely idle, and a corner whose
+        # moment passes busy is skipped -- never spoken late. A
+        # data approach cue at the same corner owns it outright.
+        # Called from feed() under the same lap/mute/pace gates
+        # as every other live cue.
+        if not self._guide_tour_active():
+            return
+        guide = getattr(self.profile, "guide", None)
+        if not guide:
+            return
+        bin_m = self.profile.bin_m
+        approach_bins = int(float(self.cfg["approach_distance_m"]) / bin_m)
+        cur_bin = int(pos * NBINS) % NBINS
+        for c in self.profile.corners:
+            num = c["num"]
+            if num in self._tour_corners:
+                continue
+            line = guide_tour_line(guide, num)
+            if not line:
+                self._tour_corners.add(num)
+                continue
+            trig = (c["brake_bin"] - approach_bins) % NBINS
+            delta = (cur_bin - trig) % NBINS
+            if delta > NBINS // 2:
+                continue  # trigger not reached yet this lap
+            dist_to_brake_m = ((c["brake_bin"] - cur_bin) % NBINS) * bin_m
+            if delta * bin_m > 430.0 or dist_to_brake_m < 100.0:
+                # Past the eligible band, or past the drop point
+                # (the approach cues' own rules): a line now would
+                # land in the braking zone. Consumed, not spoken.
+                self._tour_corners.add(num)
+                self.log("guide_line_skipped",
+                         {"num": num, "reason": "missed"})
+                continue
+            if self._in_any_zone(cur_bin):
+                continue  # mid-corner in a sequence: hold until clear
+            if num in self.approach_fired:
+                # A data cue already claimed this corner on this
+                # lap; his own numbers outrank the book.
+                self._tour_corners.add(num)
+                self.log("guide_line_skipped",
+                         {"num": num, "reason": "cue"})
+                break
+            if not self._cooldown_ok(t):
+                continue  # the speech gap may clear before the
+                # drop point; if not, the corner is consumed there
+            self._tour_corners.add(num)
+            if not self._speaker_idle():
+                self.log("guide_line_skipped",
+                         {"num": num, "reason": "busy"})
+            else:
+                name = c.get("name") or f"Turn {num}"
+                self.speaker.say(f"{name}: {line}", kind="info")
+                self.last_spoke_t = t
+                self._guide_tipped.add(num)
+                self.log("guide_line",
+                         {"num": num, "lap": self.lap_number + 1,
+                          "text": line})
+            break
+
     def _maybe_guide_tip(self, t, pos):
         # v2.3 spoken guide tips (config "guide_spoken_tips", default
         # off): the first time the car approaches a guided corner on
@@ -3553,6 +3698,8 @@ class Coach:
         # under the same out-lap / off-pace mute as the other cues.
         if not self.cfg.get("guide_spoken_tips"):
             return
+        if self._guide_tour_active():
+            return  # v2.18.0: on the guided lap the tour owns guided corners
         guide = getattr(self.profile, "guide", None)
         if not guide or not self._cooldown_ok(t):
             return
