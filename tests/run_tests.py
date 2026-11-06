@@ -1425,6 +1425,78 @@ _agg = ag._aggregate_stats(5, ag.corner_history[5][-1])
 check("cue diagnosis medians out a one-off symptom",
       _agg["brake_delta_m"] == -12.0)
 
+# ---- v2.25.0 coaching objectives (external review P1) ----
+ob, _op2 = new_coach("testOB__car")
+_brow = lambda bd, lx: {"num": 2, "name": "Turn 2", "off": False,
+                        "brake_delta_m": bd, "loss": lx, "loss_ext": lx}
+ob.corner_history = {2: [_brow(-40.0, 0.5), _brow(-42.0, 0.5),
+                         _brow(-38.0, 0.5)]}
+ob._open_objective(2, "brake", "Turn 2: brake later", _brow(-40.0, 0.5))
+check("objective opens with a baseline from recent clean laps",
+      len(ob._objectives) == 1
+      and ob._objectives[0]["base_sev"] == 32.0
+      and ob._objectives[0]["status"] == "open")
+ob._evaluate_objectives([_brow(-12.0, 0.2)])
+check("one follow-up lap leaves the objective pending",
+      ob._objectives[0]["status"] == "open")
+ob._evaluate_objectives([_brow(-10.0, 0.2)])
+check("improved behaviour + improved loss classifies effective",
+      ob._objectives[0]["status"] == "effective")
+check("closed objectives persist into the combo history",
+      (ob.history.get("objectives") or [{}])[-1].get("status")
+      == "effective")
+ob._evaluate_objectives([_brow(-11.0, 0.2)])
+ob._evaluate_objectives([_brow(-12.0, 0.2)])
+check("staying improved after closing marks the objective retained",
+      ob._objectives[0]["retained"] is True)
+ob2, _op3 = new_coach("testOB2__car")
+ob2.corner_history = {2: [_brow(-40.0, 0.5), _brow(-40.0, 0.5)]}
+ob2._open_objective(2, "brake", "Turn 2: brake later", _brow(-40.0, 0.5))
+ob2._evaluate_objectives([_brow(-58.0, 0.7)])
+ob2._evaluate_objectives([_brow(-60.0, 0.7)])
+check("a worsened metric classifies negative",
+      ob2._objectives[0]["status"] == "negative")
+ob3, _op4 = new_coach("testOB3__car")
+ob3.corner_history = {2: [_brow(-40.0, 0.5), _brow(-40.0, 0.5)]}
+ob3._open_objective(2, "brake", "Turn 2: brake later", _brow(-40.0, 0.5))
+ob3._evaluate_objectives([_brow(-38.0, 0.5)])
+ob3._evaluate_objectives([_brow(-41.0, 0.5)])
+check("an unchanged metric classifies no response",
+      ob3._objectives[0]["status"] == "no response")
+ob4, _op5 = new_coach("testOB4__car")
+_lrow = {"num": 3, "name": "Turn 3", "off": False, "loss": 0.4,
+         "loss_ext": 0.4}
+ob4.corner_history = {3: [_lrow, _lrow]}
+ob4._open_objective(3, "lift", "Turn 3: stay in it", _lrow)
+ob4._evaluate_objectives([_lrow])
+ob4._evaluate_objectives([_lrow])
+check("a metric-less kind can only classify inconclusive",
+      ob4._objectives[0]["status"] == "inconclusive")
+fc3, _fp3 = new_coach("testFC3__car")
+_fp3.corners = [
+    {"num": 2, "name": "Turn B", "zone_start": 1440, "zone_end": 1460,
+     "brake_bin": 1450, "apex_bin": 1455, "has_brake_zone": True}]
+_b3 = dict(BASE, name="Turn B", loss=0.6, off=False, coast_s=0.9)
+fc3.corner_history = {2: [_b3]}
+fc3.lap_number = 1
+fc3.last_spoke_t = -1000.0
+fc3._maybe_approach_cue(1000.0, 1355 / m.NBINS)
+fc3._drain_speaker_tags()
+check("a heard approach cue opens its objective",
+      len(fc3._objectives) == 1
+      and fc3._objectives[0]["kind"] == "coast")
+rc2, _rp2 = new_coach("testRC2__car")
+rc2._finalize_lap(make_rec(), 100.0, "test")
+rc2._objectives = [{"num": 1, "name": "Turn 1", "kind": "brake",
+                    "cue": "Turn 1: brake later", "lap_coached": 1,
+                    "status": "effective", "base_sev": 30.0,
+                    "base_disp": -38.0, "unit": "m", "base_loss": 0.5,
+                    "follow": [], "follow_disp": -10.0,
+                    "retained": True}]
+_html = m.build_report_html(rc2)
+check("report carries the coaching effectiveness section",
+      "Coaching effectiveness" in _html and "retained" in _html)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

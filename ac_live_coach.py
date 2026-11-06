@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.24.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.25.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -1997,6 +1997,84 @@ def corner_cue(res, brake_only=False, priority=None, guide=None, symptom_tips=Tr
 
 
 
+def _median(vals):
+    v = sorted(vals)
+    return v[len(v) // 2] if v else None
+
+
+# v2.25.0: coaching objectives (the Nov 6 external review's P1).
+# When an approach cue is HEARD, the coach opens an objective for
+# that corner + symptom: a baseline from the recent clean laps,
+# then follow-up laps are measured against it. Severity is 'how
+# much of the fault remains' in the stat's own units (0 = gone);
+# kinds with no scalar the telemetry supports return None and
+# their objectives can only ever read 'inconclusive' -- the
+# review's rule: never force a conclusion the data can't carry.
+_KIND_LABEL = {"brake": "braking point", "coast": "coasting",
+               "power": "throttle pickup", "speed": "apex speed",
+               "entry": "entry speed", "lockup": "lockup",
+               "spin": "wheelspin", "brake_soft": "brake pressure",
+               "release": "brake release", "apex_early": "early apex",
+               "apex_late": "late apex", "lift": "mid-corner lift",
+               "hands": "steering corrections"}
+
+
+def _objective_metric(kind, stats):
+    """(severity, display value, unit) for one corner's stats
+    under one coaching kind, or None."""
+    if not stats:
+        return None
+    if kind == "brake":
+        bd = stats.get("brake_delta_m")
+        return None if bd is None else (max(0.0, abs(bd) - 8.0), bd, "m")
+    if kind == "coast":
+        v = stats.get("coast_s") or 0.0
+        return (v, v, "s")
+    if kind == "power":
+        td = stats.get("throttle_delta_m")
+        return None if td is None else (max(0.0, td - 8.0), td, "m")
+    if kind == "speed":
+        ad = stats.get("apex_delta_kmh")
+        return None if ad is None else (max(0.0, -ad), ad, "kmh")
+    if kind == "entry":
+        ed = stats.get("entry_delta_kmh")
+        return None if ed is None else (max(0.0, -ed), ed, "kmh")
+    if kind == "lockup":
+        v = stats.get("lockup_s") or 0.0
+        return (v, v, "s")
+    if kind == "spin":
+        v = stats.get("spin_s") or 0.0
+        return (v, v, "s")
+    if kind == "brake_soft":
+        pb, pr = stats.get("peak_brake"), stats.get("peak_brake_ref")
+        if pb is None or pr is None:
+            return None
+        return (max(0.0, pr - pb), pb, "peak")
+    if kind == "release":
+        rs, rr = stats.get("release_s"), stats.get("release_ref_s")
+        if rs is None or rr is None:
+            return None
+        return (abs(rs - rr), rs, "s")
+    if kind in ("apex_early", "apex_late"):
+        sh = stats.get("apex_shift_m")
+        return None if sh is None else (abs(sh), sh, "m")
+    return None
+
+
+def _fmt_metric(unit, v):
+    if v is None:
+        return "—"
+    if unit == "m":
+        return f"{v:+.0f} m"
+    if unit == "s":
+        return f"{v:.1f} s"
+    if unit == "kmh":
+        return f"{v / 1.609:+.0f} mph"
+    if unit == "peak":
+        return f"{v:.0%}"
+    return f"{v}"
+
+
 def _atomic_write_json(path, obj):
     """Write JSON so a crash or a console closed mid-write cannot
     truncate the only copy (v2.5.3 review fix): write a temp file in
@@ -2311,6 +2389,7 @@ class Coach:
         self._approach_enqueued = set()  # v2.24.0: cues queued, not yet heard
         self._exit_pending = 0     # v2.24.0: exit lines queued, not yet heard
         self._exit_deferred = {}   # v2.24.0: exit lines held until clear of all zones
+        self._objectives = []      # v2.25.0: coaching objectives (P1)
         self.history = None        # v2.1.0: cross-session per-combo history
         self._live_losses = {}     # v2.1.0: this lap's live per-zone results (section feedback)
         self.lap_records = []      # per-lap summaries for the debrief
@@ -2607,6 +2686,7 @@ class Coach:
         self._official_watch = None
         self._seen_completed = None
         self._last_finish_t = None
+        self._objectives = []   # v2.25.0: objectives are per-combo
         if getattr(self, "_stamped_key", None) != profile.key:
             self._stamped_key = profile.key
             try:
@@ -3613,6 +3693,7 @@ class Coach:
                         self.corner_history.setdefault(r["num"], []).append(r)
                         if len(self.corner_history[r["num"]]) > 8:
                             self.corner_history[r["num"]].pop(0)
+                    self._evaluate_objectives(results)   # v2.25.0
                     # v2.1.0: fold the lap into the persistent
                     # per-combo history (clean corners only).
                     if self.history is not None:
@@ -4017,10 +4098,16 @@ class Coach:
                     # queued -- a line dropped stale or purged
                     # used to suppress this corner for two laps
                     # without ever being spoken.
+                    _pk = _pick_candidate(
+                        cue_stats,
+                        priority=guide_priority(
+                            getattr(self.profile, "guide", None), num))
                     _tag = ("approach", self.lap_number, num)
                     self._pending_marks[_tag] = (
-                        lambda num=num, cue=cue, latest=cue_stats, t=t:
-                        self._mark_approach_heard(num, cue, latest, t))
+                        lambda num=num, cue=cue, latest=cue_stats, t=t,
+                        kind=(_pk[0] if _pk else None):
+                        self._mark_approach_heard(num, cue, latest, t,
+                                                  kind=kind))
                     self.speaker.say(cue, kind="cue", tag=_tag)
                     self._approach_enqueued.add(num)
                     self.approach_cues_this_lap += 1
@@ -4062,13 +4149,117 @@ class Coach:
                 elif tag[0] == "exit":
                     self._exit_pending = max(0, self._exit_pending - 1)
 
-    def _mark_approach_heard(self, num, cue, latest, t):
+    def _mark_approach_heard(self, num, cue, latest, t, kind=None):
         # The coach's clock is feed time, not wall time (the
         # cooldown math compares against feed timestamps).
         self.last_spoke_t = t
         self.approach_fired.add(num)
         self._cue_memory[num] = {"text": cue, "lap": self.lap_number,
                                  "loss": latest["loss"]}
+        if kind:
+            self._open_objective(num, kind, cue, latest)
+
+    def _open_objective(self, num, kind, cue_text, stats):
+        """v2.25.0: an instruction was heard at this corner for
+        this symptom -- open a coaching objective. Baseline is
+        the median severity and median extended loss over the
+        corner's recent clean laps (the same window the cue was
+        diagnosed from). Re-hearing the same instruction while
+        the objective is open just refreshes it."""
+        name = stats.get("name") or f"Turn {num}"
+        hist = [r for r in self.corner_history.get(num, [])
+                if not r.get("off")][-3:]
+        sev = _objective_metric(kind, stats)
+        losses = [r.get("loss_ext", r["loss"]) for r in hist
+                  if r.get("loss") is not None]
+        for ob in self._objectives:
+            if (ob["num"] == num and ob["kind"] == kind
+                    and ob["status"] == "open"):
+                ob["cue"] = cue_text
+                ob["lap_coached"] = self.lap_number
+                ob["recoaches"] = ob.get("recoaches", 0) + 1
+                return
+        self._objectives.append({
+            "num": num, "name": name, "kind": kind, "cue": cue_text,
+            "lap_coached": self.lap_number, "status": "open",
+            "base_sev": sev[0] if sev else None,
+            "base_disp": sev[1] if sev else None,
+            "unit": sev[2] if sev else None,
+            "base_loss": _median(losses) if losses else None,
+            "follow": [], "retained": False})
+        try:
+            self.log("objective_open", {"num": num, "name": name,
+                                        "kind": kind, "cue": cue_text})
+        except Exception:
+            pass
+
+    def _evaluate_objectives(self, results):
+        """Feed one counted lap's per-corner results into every
+        open objective (and keep watching effective ones for
+        retention)."""
+        if not self._objectives:
+            return
+        by_num = {r["num"]: r for r in results}
+        for ob in self._objectives:
+            if ob["status"] not in ("open", "effective"):
+                continue
+            r = by_num.get(ob["num"])
+            if r is None or r.get("off"):
+                continue
+            met = _objective_metric(ob["kind"], r)
+            ob["follow"].append((
+                met[0] if met else None,
+                r.get("loss_ext", r["loss"]),
+                met[1] if met else None))
+            if ob["status"] == "open" and len(ob["follow"]) >= 2:
+                self._classify_objective(ob)
+            elif ob["status"] == "effective":
+                post = ob["follow"][ob.get("_close_n", 0):]
+                sevs = [f[0] for f in post if f[0] is not None]
+                if len(sevs) >= 2 and ob["base_sev"]:
+                    ob["retained"] = all(
+                        s <= 0.85 * ob["base_sev"] for s in sevs[-2:])
+
+    def _classify_objective(self, ob):
+        """The review's five plain classifications. Responded =
+        severity down at least 30% from baseline; the corner's
+        extended loss is the guardrail -- behaviour that changed
+        but didn't pay is 'behavioral', not 'effective'."""
+        sevs = [f[0] for f in ob["follow"] if f[0] is not None]
+        sev_f = _median(sevs) if sevs else None
+        losses = [f[1] for f in ob["follow"] if f[1] is not None]
+        loss_f = _median(losses) if losses else None
+        disps = [f[2] for f in ob["follow"] if f[2] is not None]
+        ob["follow_sev"] = sev_f
+        ob["follow_loss"] = loss_f
+        ob["follow_disp"] = disps[-1] if disps else None
+        ob["_close_n"] = len(ob["follow"])
+        bs, bl = ob["base_sev"], ob["base_loss"]
+        if bs is None or bs <= 0 or sev_f is None or loss_f is None \
+                or bl is None:
+            ob["status"] = "inconclusive"
+        elif sev_f <= 0.7 * bs and loss_f <= bl + 0.05:
+            ob["status"] = "effective"
+        elif sev_f <= 0.7 * bs:
+            ob["status"] = "behavioral"
+        elif sev_f >= 1.15 * bs or loss_f >= bl + 0.15:
+            ob["status"] = "negative"
+        else:
+            ob["status"] = "no response"
+        try:
+            self.log("objective_closed", {
+                "num": ob["num"], "name": ob["name"],
+                "kind": ob["kind"], "status": ob["status"]})
+        except Exception:
+            pass
+        if self.history is not None:
+            hl = self.history.setdefault("objectives", [])
+            hl.append({"name": ob["name"], "kind": ob["kind"],
+                       "status": ob["status"],
+                       "base_sev": ob["base_sev"],
+                       "follow_sev": sev_f, "unit": ob["unit"]})
+            del hl[:-50]
+            self._save_history()
 
     def _mark_exit_heard(self, t):
         self._exit_spoken += 1
@@ -4615,10 +4806,10 @@ class Coach:
                 guide=getattr(self.profile, "guide", None),
                 symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
             if cue:
-                parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(_wl)}.")
+                parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(_wl)} by the next braking zone.")
                 leak_spoken = True
             elif brake_only:
-                parts.append(f"Biggest leak: {worst['name'].lower()}, costing {tenths_phrase(_wl)}.")
+                parts.append(f"Biggest leak: {worst['name'].lower()}, costing {tenths_phrase(_wl)} by the next braking zone.")
                 leak_spoken = True
         if (leak_spoken and sass >= 2
                 and worst.get("num") is not None
@@ -4760,6 +4951,10 @@ def make_logger():
                      f"| track {fmt_track_len(data.get('track_length_m'))}\n")
         elif event == "cue":
             tf.write(f"  >> {data['text']}\n")
+        elif event == "objective_closed":
+            tf.write(f"[objective] {data.get('name')} "
+                     f"({_KIND_LABEL.get(data.get('kind'), data.get('kind'))}): "
+                     f"{data.get('status')}\n")
         elif event == "config_in_force":
             tf.write("Settings in force: " + ", ".join(
                 f"{k}={v!r}" for k, v in data.items()) + "\n")
@@ -5200,6 +5395,53 @@ def build_report_html(coach):
                             f" \u2014 {esc(srcmeta.get('channel', ''))}</p>")
             guide_html = "<h2>Track guide</h2>" + src_line + "\n".join(blocks) + "\n"
 
+    # v2.25.0: coaching effectiveness — what was coached, what
+    # changed, and the plain classification. Open objectives are
+    # shown as pending; earlier sessions' closed objectives come
+    # from the combo history, and one that matches a live
+    # objective again is flagged as recurred.
+    objectives_html = ""
+    _obs = getattr(coach, "_objectives", [])
+    _hist_obs = ((getattr(coach, "history", None) or {})
+                 .get("objectives") or [])
+    if _obs or _hist_obs:
+        _status_label = {"effective": "Effective",
+                         "behavioral": "Behavioral response",
+                         "no response": "No measurable response",
+                         "negative": "Negative response",
+                         "inconclusive": "Inconclusive",
+                         "open": "Pending — more laps needed"}
+        _rows = []
+        for ob in _obs:
+            _before = _fmt_metric(ob.get("unit"), ob.get("base_disp"))
+            _after = _fmt_metric(ob.get("unit"), ob.get("follow_disp"))
+            _st = _status_label.get(ob["status"], ob["status"])
+            if ob.get("retained"):
+                _st += " · retained"
+            _rows.append(
+                f"<tr><td>{esc(ob['name'])}</td>"
+                f"<td>{esc(_KIND_LABEL.get(ob['kind'], ob['kind']))}</td>"
+                f"<td>{_before} → {_after}</td><td>{esc(_st)}</td></tr>")
+        for h in _hist_obs[-6:]:
+            _live = any(o["name"] == h.get("name")
+                        and o["kind"] == h.get("kind") for o in _obs)
+            _st = _status_label.get(h.get("status"), h.get("status") or "")
+            if _live and h.get("status") == "effective":
+                _st += " · recurred this session"
+            _rows.append(
+                f"<tr><td>{esc(h.get('name', ''))}</td>"
+                f"<td>{esc(_KIND_LABEL.get(h.get('kind'), h.get('kind') or ''))}</td>"
+                f"<td>earlier session</td><td>{esc(_st)}</td></tr>")
+        objectives_html = (
+            "<h2>Coaching effectiveness</h2>\n"
+            "<p class='sub'>An objective opens when an instruction "
+            "is heard; its baseline is the median of the previous "
+            "clean laps, and it is judged on the laps after — "
+            "behaviour first, lap time as the guardrail.</p>\n"
+            "<table><tr><th>Corner</th><th>Coached</th>"
+            "<th>Before → after</th><th>Result</th></tr>"
+            + "".join(_rows) + "</table>\n")
+
     trace_html = _trace_svg(p, getattr(coach, "_session_best", None),
                             getattr(coach, "_optimal", None))
     summary_txt = "\n".join(coach.session_summary_lines())
@@ -5230,7 +5472,7 @@ pre {{ background: #f4f5f7; padding: 12px; border-radius: 6px; white-space: pre-
 {points_html}
 <h2>Corner data (averages vs your best lap)</h2>
 {table_html}
-{trace_html}{guide_html}<h2>Session summary</h2>
+{trace_html}{guide_html}{objectives_html}<h2>Session summary</h2>
 <pre>{esc(summary_txt)}</pre>
 <p class="sub">Map drawn from your own driven line (heading + distance integration).
 Corners where you left the track (2+ tyres off) are excluded from the averages —
