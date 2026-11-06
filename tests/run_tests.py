@@ -785,6 +785,79 @@ check("briefing: stats line follows with a varied frame",
                         "places mapped here")),
       f"got {_bcoach.speaker.lines[1:2]}")
 
+# --- v2.17.0 layout isolation --------------------------------------
+# Layouts of one track folder (Streets vs Big Willow in the DDM mod;
+# classic vs The Circuit in Nukedrop's Buttonwillow) must not share
+# guides, names files, or corner maps.
+import json as _json
+
+m.TRACKS_DIR = TMP  # Coach() constructions above re-resolve the global
+
+
+class _StubProfile:
+    def __init__(self, key):
+        self.key = key
+
+
+def _write_guide(stem, zones=2, length=None):
+    g = {"track": stem,
+         "zones": {str(i): {"name": f"Z{i}", "character": "", "tips": []}
+                   for i in range(1, zones + 1)}}
+    if length:
+        g["layout_length_m"] = length
+    with open(os.path.join(TMP, stem + "__guide.json"), "w") as f:
+        _json.dump(g, f)
+
+
+_write_guide("testtrack", zones=2)
+_write_guide("testtrack__big", zones=3, length=4023)
+_write_guide("testtrack__layout5550", zones=4)
+
+check("layout len: parses the suffix",
+      m._layout_len("a__b__layout4020") == 4020
+      and m._layout_len("a__b") is None)
+check("layout guide: plain profile gets the folder guide",
+      (m._load_guide_for_profile(_StubProfile("testtrack__car"))
+       or {}).get("track") == "testtrack")
+check("layout guide: exact layout file wins",
+      (m._load_guide_for_profile(
+          _StubProfile("testtrack__car__layout5550"))
+       or {}).get("track") == "testtrack__layout5550")
+check("layout guide: length tolerance binds the named layout guide",
+      (m._load_guide_for_profile(
+          _StubProfile("testtrack__car__layout4020"))
+       or {}).get("track") == "testtrack__big")
+check("layout guide: unmatched layout gets NO folder fallback",
+      m._load_guide_for_profile(
+          _StubProfile("testtrack__car__layout9990")) is None)
+
+check("layout map: layout profile gets its own map file",
+      m.TrackProfile("testtrack__car__layout4020").track_map_path()
+      .endswith("testtrack__layout4020__map.json"))
+check("layout map: plain profile path unchanged",
+      m.TrackProfile("testtrack__car").track_map_path()
+      .endswith("testtrack__map.json"))
+
+with open(os.path.join(TMP, "nametrack__names.json"), "w") as f:
+    _json.dump({"1": "Wrong One", "2": "Wrong Two"}, f)
+_ncoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+_ncoach.profile = m.TrackProfile("nametrack__car__layout4020")
+_ncs = [{"num": 1, "name": "Turn 1"}, {"num": 2, "name": "Turn 2"}]
+_ncoach._apply_user_names(_ncs)
+check("layout names: folder names file does not leak into a layout",
+      [c["name"] for c in _ncs] == ["Turn 1", "Turn 2"])
+check("layout names: starter lands at the layout path",
+      os.path.exists(os.path.join(
+          TMP, "nametrack__layout4020__names.json")))
+
+_bwcoach = m.Coach(CFG, FakeSpeaker(), lambda *a, **k: None)
+_bwcoach.profile = m.TrackProfile("nd_buttonwillow__car__layout5000")
+_bwcs = [{"num": i, "name": f"Turn {i}", "apex_bin": int(i * 200)}
+         for i in range(1, 8)]
+_bwcoach._apply_corner_names(_bwcs)
+check("bw names: layout profile keeps Turn N (no classic spans)",
+      all(c["name"].startswith("Turn") for c in _bwcs))
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

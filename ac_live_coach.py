@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.16.3"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.17.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -1881,9 +1881,15 @@ class TrackProfile:
         return False
 
     def track_map_path(self):
-        """Per-TRACK corner map shared across cars: tracks/<track>__map.json."""
+        """Per-TRACK corner map shared across cars: tracks/<track>__map.json.
+        v2.17.0: a __layoutNNNN profile (a non-default layout of the
+        folder) gets its OWN map file -- layouts of one folder have
+        different corners, and sharing one map across them handed a
+        fresh layout the main layout's geometry."""
         track = self.key.split("__", 1)[0]
-        return os.path.join(TRACKS_DIR, track + "__map.json")
+        lay = _layout_len(self.key)
+        stem = f"{track}__layout{lay}" if lay else track
+        return os.path.join(TRACKS_DIR, stem + "__map.json")
 
     def history_path(self):
         """Per-COMBO cross-session history (v2.1.0): sessions, laps
@@ -1934,6 +1940,50 @@ class TrackProfile:
     @property
     def bin_m(self):
         return (self.track_length_m or 4780.0) / NBINS
+
+
+def _layout_len(key):
+    """The layout length (m, rounded to 10) encoded in a profile
+    key's __layoutNNNN suffix (v2.6.0 layout guard), else None."""
+    mm = re.search(r"__layout(\d+)$", key or "")
+    return int(mm.group(1)) if mm else None
+
+
+def _load_guide_for_profile(profile):
+    """Guide for a profile (v2.17.0). A __layoutNNNN profile (a
+    non-default layout of its track folder) gets a LAYOUT guide:
+    <track>__layoutNNNN__guide.json first, then any
+    <track>__*__guide.json in the guide folders whose declared
+    layout_length_m sits within 3% of the layout's length. It never
+    falls back to the folder guide -- that file describes the
+    folder's main layout, and the wrong corners' advice is worse
+    than none (the zone-count guard can't catch a corner count
+    that happens to coincide)."""
+    key = profile.key
+    track = key.split("__", 1)[0]
+    lay = _layout_len(key)
+    if lay is None:
+        return _load_guide(track)
+    g = _load_guide(f"{track}__layout{lay}")
+    if g:
+        return g
+    for base in [TRACKS_DIR] + _legacy_data_dirs() + [os.path.join(APP_DIR, "guides")]:
+        try:
+            names = sorted(os.listdir(base))
+        except Exception:
+            continue
+        for fn in names:
+            if not (fn.startswith(track + "__") and fn.endswith("__guide.json")):
+                continue
+            try:
+                with open(os.path.join(base, fn), "r", encoding="utf-8") as f:
+                    cand = json.load(f)
+                ll = float(cand.get("layout_length_m"))
+                if isinstance(cand.get("zones"), dict) and abs(ll - lay) / lay <= 0.03:
+                    return cand
+            except Exception:
+                continue
+    return None
 
 
 def _load_guide(track):
@@ -2126,6 +2176,10 @@ class Coach:
         p = self.profile
         if not (p and "buttonwillow" in p.key):
             return
+        if _layout_len(p.key):
+            return  # v2.17.0: the canonical spans describe the
+            # classic layout; a layout profile (e.g. The Circuit)
+            # keeps Turn N until its own names exist.
         if len(corners) == 7:
             for c in corners:
                 if c["num"] in self.BUTTONWILLOW_7:
@@ -2180,7 +2234,13 @@ class Coach:
         if not p or not corners:
             return
         track = p.key.split("__", 1)[0]
-        path = _find_data_file(track + "__names.json") or os.path.join(TRACKS_DIR, track + "__names.json")
+        # v2.17.0: a layout profile uses a layout-specific names
+        # file (and its starter lands there too) -- the folder file
+        # names a DIFFERENT layout's corners, and the count guard
+        # alone can't catch a count that happens to coincide.
+        lay = _layout_len(p.key)
+        stem = f"{track}__layout{lay}" if lay else track
+        path = _find_data_file(stem + "__names.json") or os.path.join(TRACKS_DIR, stem + "__names.json")
         try:
             if os.path.exists(path):
                 with open(path, "r", encoding="utf-8") as f:
@@ -2247,7 +2307,7 @@ class Coach:
         # v2.3: track guide for this profile's track, if one exists
         # (profiles folder first, then the app's guides/ folder).
         track_part = profile.key.split("__", 1)[0]
-        profile.guide = _load_guide(track_part)
+        profile.guide = _load_guide_for_profile(profile)
         self._guide_tipped = set()
         if (profile.guide and profile.corners
                 and len((profile.guide.get("zones") or {}))
