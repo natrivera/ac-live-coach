@@ -55,7 +55,7 @@ TOGGLES = [
     ("sass_level", "Sass level (-1 supportive … 4 mean girl)",
      "choice", [-1, 0, 1, 2, 3, 4], True),
     ("brake_tone", "Brake-point tone", "bool", None, True),
-    ("brake_tone_volume", "Brake tone volume (0–1)", "float", None, True),
+    ("brake_tone_volume", "Brake tone volume", "scale", None, True),
     ("guide_lap", "Guided lap (guide read on lap 2)", "bool", None, True),
     ("guide_spoken_tips", "Guide tips spoken once per corner",
      "bool", None, True),
@@ -71,16 +71,20 @@ TOGGLES = [
 ]
 MANAGED_KEYS = [t[0] for t in TOGGLES]
 
-# Content Manager-style palette.
-BG = "#1e1e1e"        # window
-SURFACE = "#252526"   # header band / tab strip
-RAISED = "#2d2d30"    # selected tab / hover
-FIELD = "#333337"     # entry + combo fields
-BORDER = "#3f3f46"
-TEXT = "#f1f1f1"
-DIM = "#a3a3a3"
-ACCENT = "#4c9aff"
-ACCENT_HOVER = "#6cb0ff"
+# Content Manager palette (from Albert's CM screenshot,
+# Nov 6): near-black everywhere, fields one step lighter, white
+# thin type, and the lime 'Go!' green as the single accent. The
+# one CM trait tkinter can't honestly do is the blurred photo
+# showing through -- solid near-black stands in for it.
+BG = "#131313"        # window
+SURFACE = "#1a1a1a"   # header band / tab strip
+RAISED = "#262626"    # selected tab / hover
+FIELD = "#242424"     # entry + combo fields
+BORDER = "#333333"
+TEXT = "#f5f5f5"
+DIM = "#8f8f8f"
+ACCENT = "#a4c639"    # CM 'Go!' green
+ACCENT_HOVER = "#bce05a"
 
 
 def apply_theme(root):
@@ -98,25 +102,30 @@ def apply_theme(root):
     style.configure("SurfaceDim.TLabel", background=SURFACE,
                     foreground=DIM)
     style.configure("Title.TLabel", background=SURFACE, foreground=TEXT,
-                    font=("Segoe UI", 12, "bold"))
+                    font=("Segoe UI Light", 22))
+    style.configure("TitleDim.TLabel", background=SURFACE,
+                    foreground=DIM, font=("Segoe UI Light", 22))
     style.configure("State.TLabel", background=SURFACE, foreground=TEXT,
-                    font=("Segoe UI", 12, "bold"))
+                    font=("Segoe UI", 11))
     style.configure("Info.TLabel", background=BG, foreground=DIM,
                     font=("Segoe UI", 10))
     style.configure("TButton", background=FIELD, foreground=TEXT,
                     borderwidth=0, focusthickness=0, padding=(12, 6))
     style.map("TButton", background=[("active", RAISED)])
-    style.configure("Accent.TButton", background=ACCENT,
-                    foreground="#ffffff", borderwidth=0,
-                    focusthickness=0, padding=(16, 7),
-                    font=("Segoe UI", 10, "bold"))
+    # The CM 'Go!' button: dark face, lime border, lime text.
+    style.configure("Accent.TButton", background=SURFACE,
+                    foreground=ACCENT, borderwidth=1,
+                    bordercolor=ACCENT, lightcolor=ACCENT,
+                    darkcolor=ACCENT, focusthickness=0,
+                    padding=(18, 7), font=("Segoe UI", 10, "bold"))
     style.map("Accent.TButton",
-              background=[("active", ACCENT_HOVER),
-                          ("disabled", FIELD)])
+              foreground=[("active", ACCENT_HOVER)],
+              bordercolor=[("active", ACCENT_HOVER),
+                           ("disabled", BORDER)])
     style.configure("TNotebook", background=BG, borderwidth=0)
     style.configure("TNotebook.Tab", background=SURFACE,
                     foreground=DIM, borderwidth=0, padding=(14, 7),
-                    font=("Segoe UI", 10))
+                    font=("Segoe UI", 10, "bold"))
     style.map("TNotebook.Tab",
               background=[("selected", RAISED)],
               foreground=[("selected", TEXT)])
@@ -135,12 +144,16 @@ def apply_theme(root):
               indicatorcolor=[("selected", ACCENT), ("!selected", FIELD)])
     style.configure("TScrollbar", background=RAISED, troughcolor=BG,
                     borderwidth=0, arrowcolor=DIM)
+    style.configure("TScale", background=BG, troughcolor=FIELD,
+                    borderwidth=0)
+    style.configure("Horizontal.TScale", background=BG,
+                    troughcolor=FIELD, borderwidth=0)
     style.configure("TSeparator", background=BORDER)
     # The combobox dropdown list is a raw tk listbox under the hood.
     root.option_add("*TCombobox*Listbox.background", FIELD)
     root.option_add("*TCombobox*Listbox.foreground", TEXT)
-    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
-    root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
+    root.option_add("*TCombobox*Listbox.selectBackground", RAISED)
+    root.option_add("*TCombobox*Listbox.selectForeground", TEXT)
     root.option_add("*TCombobox*Listbox.font", "Segoe UI 10")
 
 
@@ -271,18 +284,32 @@ class Panel:
         self.current_combo = None
 
         apply_theme(root)
+        # App icon (Albert, Nov 6): a CM-green steering wheel on
+        # near-black, so the taskbar button reads as a coach app.
+        # Guarded -- a missing icon must never block the panel.
+        try:
+            _ico = os.path.join(os.path.dirname(
+                os.path.abspath(__file__)), "coach_icon.ico")
+            if os.path.exists(_ico):
+                root.iconbitmap(_ico)
+        except Exception:
+            pass
         root.title("AC Live Coach — Control Panel")
-        root.geometry("780x660")
-        root.minsize(680, 540)
+        root.geometry("880x660")
+        root.minsize(720, 540)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        band = ttk.Frame(root, style="Surface.TFrame", padding=(14, 10))
+        band = ttk.Frame(root, style="Surface.TFrame", padding=(16, 12))
         band.pack(fill="x")
         left = ttk.Frame(band, style="Surface.TFrame")
         left.pack(side="left")
-        ttk.Label(left, text="AC LIVE COACH", style="Title.TLabel"
-                  ).pack(anchor="w")
-        ttk.Label(left, text=f"control panel · v{m.VERSION}",
+        trow = ttk.Frame(left, style="Surface.TFrame")
+        trow.pack(anchor="w")
+        ttk.Label(trow, text="ac live coach", style="Title.TLabel"
+                  ).pack(side="left")
+        ttk.Label(trow, text="  control panel",
+                  style="TitleDim.TLabel").pack(side="left")
+        ttk.Label(left, text=f"v{m.VERSION} · the coach, in one window",
                   style="SurfaceDim.TLabel").pack(anchor="w")
         self.run_btn = ttk.Button(band, text="Start coach",
                                   style="Accent.TButton",
@@ -333,6 +360,19 @@ class Panel:
                 ctl.bind("<<ComboboxSelected>>",
                          lambda e, k=key, v=var, ch=choices:
                          self._apply(k, _coerce_choice(v.get(), ch)))
+            elif kind == "scale":
+                var = tk.DoubleVar(value=float(self.cfg.get(key, 0.0)))
+                ctl = ttk.Scale(row, variable=var, from_=0.0, to=1.0,
+                                length=150)
+                ctl.bind("<ButtonRelease-1>",
+                         lambda e, k=key, v=var:
+                         self._apply(k, round(float(v.get()), 2)))
+                ctl.pack(side="left")   # pack before the value label
+                lab = ttk.Label(row, width=5, style="Dim.TLabel")
+                lab.pack(side="left", padx=4)
+                var.trace_add("write", lambda *a, v=var, l=lab:
+                              l.configure(text=f"{float(v.get()):.2f}"))
+                lab.configure(text=f"{float(var.get()):.2f}")
             else:
                 var = tk.StringVar(value=str(self.cfg.get(key, "")))
                 ctl = ttk.Entry(row, textvariable=var, width=14)
@@ -534,6 +574,16 @@ def _coerce_choice(raw, choices):
 
 
 def main():
+    # Give Windows an explicit app identity for the panel, so
+    # the taskbar groups it as its own app (with its icon) rather
+    # than as a Python window. Windows-only; harmless elsewhere.
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "natrivera.aclivecoach.panel")
+        except Exception:
+            pass
     if tk is None:
         print("tkinter is not available in this Python install — "
               "the panel cannot open. The console coach "
