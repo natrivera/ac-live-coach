@@ -1,1 +1,243 @@
-{"layout_notes":["This guide is built for 13CW from three sources: Driver Mod's written 13CW guide (primary), Boosted Films' CW13 Track Tips video, and Full Throttle Driving Academy's CW tutorial for technique depth on the shared corners.","FTDA's video was recorded on configuration 1 CW, which replaces the Sweeper with Star Mazda — its Star Mazda material is deliberately NOT used for the Sweeper zones (7-8). The Sweeper content comes from Driver Mod and Boosted, who agree it drives as a double apex despite being drawn as a single late apex.","Sunset's apex dip is disputed between sources: FTDA uses it for grip, Driver Mod warns it unsettles the car and bends wheels. Flagged in zone 9 rather than resolved.","Zone geography corrected by Albert (Nov 5 2026) against his session report: zone 5 is Bus Stop (Riverside is the unzoned sweeper after it, with a left kink into Phil Hill); zones 7 and 8 are Sweeper Entry and Sweeper Exit; the Esses and the slight left after them are unzoned, before Sunset. Earlier versions of this guide carried the Riverside content on zone 5 and the Esses content on zone 8."],"source":{"car":"Honda S2000 / C7 Corvette (author's laps 1:52.8 / 1:47.8)","channel":"Driver Mod (Kevin Burke)","layout_note":"Written turn-by-turn for the real 13CW configuration — complete lap including the Sweeper. Primary source of the Nov 2026 rebuild.","title":"Buttonwillow 13CW","url":"https://www.driver-mod.com/track-guides/buttonwillow-13cw"},"sources":[{"channel":"Driver Mod (Kevin Burke)","note":"Primary written source; complete 13CW including a dedicated Sweeper section.","title":"Buttonwillow 13CW","url":"https://www.driver-mod.com/track-guides/buttonwillow-13cw"},{"channel":"Boosted Films","note":"Most-watched CW13 guide (20,015 views, Feb 2020); ~300 hp turbo S2000 hot lap. Best video treatment of the Sweeper (two corners / double apex, run to the very edge, sand beyond). The ASMotorsports 'Track Tips' video is the same production.","title":"Buttonwillow CW13 Track Tips","url":"https://www.youtube.com/watch?v=DvVwHlR3V5o"},{"channel":"Full Throttle Driving Academy","note":"Technique-depth source for the shared corners (6,773 views, Oct 2024); 991.2 Cup. Recorded on configuration 1 CW — Star Mazda instead of the Sweeper — so it contributes nothing to zone 7.","title":"Buttonwillow CW Tutorial - Tips and Tricks to go faster!","url":"https://www.youtube.com/watch?v=XIxXIvsDz3s"}],"track":"nd_buttonwillow","unmatched":[{"between":"Off Ramp and Cotton Corners 1","corner":"I-5","tips":["Long straight — brake early enough not to track out into the Cotton entry","Set up the Cotton Corners exit, not the straight"]},{"between":"Cotton Corners 2 and Bus Stop","corner":"Grapevine","tips":["Hands dead straight over the crest","Expect wheelspin at the top","Slight lift to rotate, then flat","Stay off the slippery outer curb"]},{"between":"Cotton Corners 2 and Bus Stop","corner":"Club Corner","tips":["Two rights — stay mid-track exiting","Save room for the fast left","Turn in nice and early, anticipate understeer (Driver Mod)","The crest on the run in can make a powerful car light — lift over it (Driver Mod)"]},{"between":"Bus Stop and Phil Hill","corner":"Riverside","tips":["The big sweeper after Bus Stop — no braking zone, so no coach zone; it is driven, not braked","Enter aimed from Bus Stop's exit, over the black-marked entry curb","Lift, or drag the brake, to tuck in as understeer builds","Hold one-third from the right — the very inside is bumpy enough to throw the car (Boosted)","Skip the second-apex divot — pass a few feet wide of it","Minimum speed is the metric; never lift fully (Driver Mod)","Give up a little exit to get back right — the left kink after it sets up Phil Hill"]},{"between":"Bus Stop and Riverside","corner":"Truck Stop","tips":["Flat in a grip-over-power car (Driver Mod)","Short-shift if needed to keep the car settled into Riverside (Driver Mod)"]},{"between":"Sweeper Exit and Sunset","corner":"Esses","tips":["Fast flowing S's — flat out until the fourth, slight lift, back on it","Straighten them out and use the curbs; the curbs grow further down (Driver Mod)","Late apex the final S — the dangerous one: an off here can bounce the car back toward the wall","Off here: straighten hands, take it straight off right into the desert","A slight left out of the Esses leads into Sunset (Albert)"]}],"zones":{"1":{"character":"Turn 1, banked to the inside with a fairly early apex. The road drops into a banked pocket mid-corner where grip comes to you, then crests and falls off-camber on exit, so traction disappears just as you want throttle. The braking-zone curb is slippery — braking on it slows the car worse than the pavement beside it. Driver Mod adds that the decreasing radius is what makes the corner work: brake as late as the car allows and you are back on throttle just after turn-in, building progressively (about a fifth throttle at the apex first) — full throttle too early steps the rear out. Boosted's real-track brake reference is the access road on the right, and both video sources say the corner is faster than it looks.","name":"Sunrise","priority":"balanced","tips":["Brake straight beside the curb, not on it",{"text":"Turn in earlier than you think","trigger":"apex_late"},"Use about half the exit curb","Feather throttle — exit falls off-camber","Faster than it looks — carry the extra speed in"]},"2":{"character":"A low-traction patchwork right-hander climbing a hill — the narrator calls it a mess of a corner. You approach at full throttle and arc gently in; hitting the left curb under braking bounces the car and wrecks braking performance. Brake lightly while still angled, straighten the hands as pressure builds, then threshold-brake at the curb and ride the right curb uphill. Overshooting means too much steering angle and no throttle for the straight after, so rotation must be finished early. Driver Mod brakes from the kink on the approach and puts the car on the inside curbing, where extra camber and a different asphalt patch give grip if you hit it just right; his cue is feeling the suspension set, then getting on throttle before the camber changes — the exit is the hardest acceleration anywhere on the lap.","name":"Off Ramp","priority":"exit","tips":["Arc in gently toward the curb","Light brake first, threshold at curb","Never brake over the left curb","Ride the right curb uphill",{"text":"Finish rotation, then feed throttle","trigger":"power"},"Inside curbing carries extra camber — use it (Driver Mod)"]},"3":{"character":"Entry to the Cotton Corners complex. The video treats Cotton Corners as three linked turns (right, left, uphill right); the sim map has two zones, so this zone carries the first turn and the sequence principle: sacrifice the first two corners to maximise the third corner's exit. Full threshold braking, angle in and clip the curb, but deliberately do not track all the way out — hold mid-track for what follows. Driver Mod's read agrees: in this complex only the entry and the exit matter, and the entry starts with braking early off the I-5 straight so the first turn-in doesn't push wide.","name":"Cotton Corners 1","priority":"entry","tips":["Sacrifice this corner for the sequence","Threshold brake, angle in, clip curb","Don't track out — stay mid-track","Brake early off I-5 — don't push wide (Driver Mod)"]},"4":{"character":"The payoff half of the Cotton Corners complex. Stay left after the middle corner — tracking out here ruins the final turn. Use the whole of the wide inside curb (the fast line kicks up dirt there), then late-apex the uphill right by the flag station and feed the throttle down the hill: one of the fastest acceleration zones on the track. The exit curb is slippery and dusty; run parallel to it rather than on it. Driver Mod works the middle corner with a brief throttle then a touch of left-foot brake to rotate the car without tracking out, and is back on throttle up the hill.","name":"Cotton Corners 2","priority":"exit","tips":["Stay left for the late apex","Use all the wide inside curb",{"text":"Late apex the uphill right","trigger":"apex_early"},{"text":"Feed throttle early down the hill","trigger":"power"},"Run parallel to the dusty exit curb",{"text":"Touch of left-foot brake rotates it without a lift","trigger":"coast"}]},"5":{"character":"The tight flick between Club Corner and Riverside — the braking zone the old version of this guide mislabeled as Riverside. Brake straight and full threshold, clip all of the left curb, and run out of track on the exit. The signature detail is the curb jump: brake early enough to be back on throttle as you cross it, because throttle settles the landing — coast over it and the car bounces unsettled. Smooth hands and keep accelerating through; momentum should carry you to the outside curb, and if it doesn't, the entry was too slow. High power: start at about a tenth throttle over the jump and build. Wheels off: straighten the hands and don't try to save it.","name":"Bus Stop","priority":"entry","tips":[{"text":"Brake straight, full threshold","trigger":"brake"},"Clip all of the left curb","On throttle at the curb jump — it settles the landing (Driver Mod)","Run out of track on exit","Smooth hands, accelerate through it","Wheels off: straighten hands, don't save"]},"6":{"character":"Steep uphill threshold-braking zone — the hill itself helps scrub speed, so brake as late and hard as the car allows, just shy of ABS. The car goes very light over the crest and, done right, drifts in a neutral four-wheel slide over the top. Turning in late or missing the apex curb delays throttle badly, and exit speed is everything: from the crest it is full throttle down the hill and through the following left kink. Driver Mod stresses the apex is blind: turn in just late enough to line the exit up in a straight line and get on throttle just after the crest — the overshoot here is famous enough that the run-off beyond it is called the splitter graveyard.","name":"Phil Hill","priority":"exit","tips":["Threshold brake up the steep hill",{"text":"Brake as late as the car allows","trigger":"brake"},"Clip the apex curb at crest","Let it drift neutral over crest",{"text":"Full throttle from crest to bottom","trigger":"power"},"Blind apex — turn in late enough to straighten the exit (Driver Mod)"]},"7":{"character":"The entry half of the big outer loop after Phil Hill — you arrive flat out down the hill past the crest kink. Both primary sources drive the Sweeper as a double apex despite it being drawn as one long late apex, and this zone is the first half of that bargain: brake very late and use the corner's full width as the braking zone, take an early first apex, and rotate the car so the exit half (the next zone) can be all throttle. Giving up a little entry speed pays extremely large dividends on the exit — both sources rank this exit among the most valuable on the lap.","name":"Sweeper Entry","priority":"entry","tips":[{"text":"Brake very late — use the corner's width as the braking zone","trigger":"brake"},"Early first apex — it's a double apex","Flat downhill into it","Rotate it early — the exit half is the payoff"]},"8":{"character":"The exit half of the Sweeper, and the whole point of the corner: after the first apex, let the car drift out to the very edge of the track, pick up the late second apex, and get the throttle down and keep it down toward the Esses. The outer edge ends in sand — dip a wheel off and it spins — so the drift out to the edge is a precision target, not a suggestion. What this zone gains carries all the way down to Sunset.","name":"Sweeper Exit","priority":"exit","tips":["Run out to the very edge — the sand past it spins you","Late second apex, then commit",{"text":"Exit is everything — get on throttle and stay on it","trigger":"power"},"Set up the Esses from the exit"]},"9":{"character":"Final corner onto the main straight, and exit speed sets your trap speed at start/finish. Threshold-brake to a mid apex and drop into the divot, where traction comes back; the exit then loses grip again and gets slippery on the rumble strip, so the throttle must be feathered even while you track all the way out and use the strip. Sources disagree on that apex dip: FTDA uses it for grip, while Driver Mod warns the dip unsettles the car and bends wheels and says stay out of it nine times out of ten — treat it as suspect until your own laps say otherwise. Driver Mod also ranks Sunset the lap's biggest PB-killer, mostly through head games: brake a touch early, stay calm, throttle at the apex. And if you overshoot, go off in a straight line — fighting it back loses the rear toward the pit wall. Boosted adds a late apex and warns to keep the right wheel off the entry curbing under braking; it is slippery and pitches the car sideways.","name":"Sunset","priority":"exit","tips":["Threshold brake to a mid apex","Drop into the divot for grip","Feather throttle on the slippery exit","Use all the road out","Keep the right wheel off the slippery entry curb under braking (Boosted)",{"text":"Brake a touch early — greed here kills PBs","trigger":"brake"}]}}}
+{
+  "layout_notes": [
+    "This guide is built for 13CW from three sources: Driver Mod's written 13CW guide (primary), Boosted Films' CW13 Track Tips video, and Full Throttle Driving Academy's CW tutorial for technique depth on the shared corners.",
+    "FTDA's video was recorded on configuration 1 CW, which replaces the Sweeper with Star Mazda — its Star Mazda material is deliberately NOT used for the Sweeper zones (7-8). The Sweeper content comes from Driver Mod and Boosted, who agree it drives as a double apex despite being drawn as a single late apex.",
+    "Sunset's apex dip is disputed between sources: FTDA uses it for grip, Driver Mod warns it unsettles the car and bends wheels. Flagged in zone 9 rather than resolved.",
+    "Zone geography corrected by Albert (Nov 5 2026) against his session report: zone 5 is Bus Stop (Riverside is the unzoned sweeper after it, with a left kink into Phil Hill); zones 7 and 8 are Sweeper Entry and Sweeper Exit; the Esses and the slight left after them are unzoned, before Sunset. Earlier versions of this guide carried the Riverside content on zone 5 and the Esses content on zone 8."
+  ],
+  "source": {
+    "car": "Honda S2000 / C7 Corvette (author's laps 1:52.8 / 1:47.8)",
+    "channel": "Driver Mod (Kevin Burke)",
+    "layout_note": "Written turn-by-turn for the real 13CW configuration — complete lap including the Sweeper. Primary source of the Nov 2026 rebuild.",
+    "title": "Buttonwillow 13CW",
+    "url": "https://www.driver-mod.com/track-guides/buttonwillow-13cw"
+  },
+  "sources": [
+    {
+      "channel": "Driver Mod (Kevin Burke)",
+      "note": "Primary written source; complete 13CW including a dedicated Sweeper section.",
+      "title": "Buttonwillow 13CW",
+      "url": "https://www.driver-mod.com/track-guides/buttonwillow-13cw"
+    },
+    {
+      "channel": "Boosted Films",
+      "note": "Most-watched CW13 guide (20,015 views, Feb 2020); ~300 hp turbo S2000 hot lap. Best video treatment of the Sweeper (two corners / double apex, run to the very edge, sand beyond). The ASMotorsports 'Track Tips' video is the same production.",
+      "title": "Buttonwillow CW13 Track Tips",
+      "url": "https://www.youtube.com/watch?v=DvVwHlR3V5o"
+    },
+    {
+      "channel": "Full Throttle Driving Academy",
+      "note": "Technique-depth source for the shared corners (6,773 views, Oct 2024); 991.2 Cup. Recorded on configuration 1 CW — Star Mazda instead of the Sweeper — so it contributes nothing to zone 7.",
+      "title": "Buttonwillow CW Tutorial - Tips and Tricks to go faster!",
+      "url": "https://www.youtube.com/watch?v=XIxXIvsDz3s"
+    }
+  ],
+  "track": "nd_buttonwillow",
+  "unmatched": [
+    {
+      "between": "Off Ramp and Cotton Corners 1",
+      "corner": "I-5",
+      "tips": [
+        "Long straight — brake early enough not to track out into the Cotton entry",
+        "Set up the Cotton Corners exit, not the straight"
+      ]
+    },
+    {
+      "between": "Cotton Corners 2 and Bus Stop",
+      "corner": "Grapevine",
+      "tips": [
+        "Hands dead straight over the crest",
+        "Expect wheelspin at the top",
+        "Slight lift to rotate, then flat",
+        "Stay off the slippery outer curb"
+      ]
+    },
+    {
+      "between": "Cotton Corners 2 and Bus Stop",
+      "corner": "Club Corner",
+      "tips": [
+        "Two rights — stay mid-track exiting",
+        "Save room for the fast left",
+        "Turn in nice and early, anticipate understeer (Driver Mod)",
+        "The crest on the run in can make a powerful car light — lift over it (Driver Mod)"
+      ]
+    },
+    {
+      "between": "Bus Stop and Phil Hill",
+      "corner": "Riverside",
+      "tips": [
+        "The big sweeper after Bus Stop — no braking zone, so no coach zone; it is driven, not braked",
+        "Enter aimed from Bus Stop's exit, over the black-marked entry curb",
+        "Lift, or drag the brake, to tuck in as understeer builds",
+        "Hold one-third from the right — the very inside is bumpy enough to throw the car (Boosted)",
+        "Skip the second-apex divot — pass a few feet wide of it",
+        "Minimum speed is the metric; never lift fully (Driver Mod)",
+        "Give up a little exit to get back right — the left kink after it sets up Phil Hill"
+      ]
+    },
+    {
+      "between": "Bus Stop and Riverside",
+      "corner": "Truck Stop",
+      "tips": [
+        "Flat in a grip-over-power car (Driver Mod)",
+        "Short-shift if needed to keep the car settled into Riverside (Driver Mod)"
+      ]
+    },
+    {
+      "between": "Sweeper Exit and Sunset",
+      "corner": "Esses",
+      "tips": [
+        "Fast flowing S's — flat out until the fourth, slight lift, back on it",
+        "Straighten them out and use the curbs; the curbs grow further down (Driver Mod)",
+        "Late apex the final S — the dangerous one: an off here can bounce the car back toward the wall",
+        "Off here: straighten hands, take it straight off right into the desert",
+        "A slight left out of the Esses leads into Sunset (Albert)"
+      ]
+    }
+  ],
+  "zones": {
+    "1": {
+      "character": "Turn 1, banked to the inside with a fairly early apex. The road drops into a banked pocket mid-corner where grip comes to you, then crests and falls off-camber on exit, so traction disappears just as you want throttle. The braking-zone curb is slippery — braking on it slows the car worse than the pavement beside it. Driver Mod adds that the decreasing radius is what makes the corner work: brake as late as the car allows and you are back on throttle just after turn-in, building progressively (about a fifth throttle at the apex first) — full throttle too early steps the rear out. Boosted's real-track brake reference is the access road on the right, and both video sources say the corner is faster than it looks.",
+      "name": "Sunrise",
+      "priority": "balanced",
+      "tips": [
+        "Brake straight beside the curb, not on it",
+        {
+          "text": "Turn in earlier than you think",
+          "trigger": "apex_late"
+        },
+        "Use about half the exit curb",
+        "Feather throttle — exit falls off-camber",
+        "Faster than it looks — carry the extra speed in"
+      ]
+    },
+    "2": {
+      "character": "A low-traction patchwork right-hander climbing a hill — the narrator calls it a mess of a corner. You approach at full throttle and arc gently in; hitting the left curb under braking bounces the car and wrecks braking performance. Brake lightly while still angled, straighten the hands as pressure builds, then threshold-brake at the curb and ride the right curb uphill. Overshooting means too much steering angle and no throttle for the straight after, so rotation must be finished early. Driver Mod brakes from the kink on the approach and puts the car on the inside curbing, where extra camber and a different asphalt patch give grip if you hit it just right; his cue is feeling the suspension set, then getting on throttle before the camber changes — the exit is the hardest acceleration anywhere on the lap.",
+      "name": "Off Ramp",
+      "priority": "exit",
+      "tips": [
+        "Arc in gently toward the curb",
+        "Light brake first, threshold at curb",
+        "Never brake over the left curb",
+        "Ride the right curb uphill",
+        {
+          "text": "Finish rotation, then feed throttle",
+          "trigger": "power"
+        },
+        "Inside curbing carries extra camber — use it (Driver Mod)"
+      ]
+    },
+    "3": {
+      "character": "Entry to the Cotton Corners complex. The video treats Cotton Corners as three linked turns (right, left, uphill right); the sim map has two zones, so this zone carries the first turn and the sequence principle: sacrifice the first two corners to maximise the third corner's exit. Full threshold braking, angle in and clip the curb, but deliberately do not track all the way out — hold mid-track for what follows. Driver Mod's read agrees: in this complex only the entry and the exit matter, and the entry starts with braking early off the I-5 straight so the first turn-in doesn't push wide.",
+      "name": "Cotton Corners 1",
+      "priority": "entry",
+      "tips": [
+        "Sacrifice this corner for the sequence",
+        "Threshold brake, angle in, clip curb",
+        "Don't track out — stay mid-track",
+        "Brake early off I-5 — don't push wide (Driver Mod)"
+      ]
+    },
+    "4": {
+      "character": "The payoff half of the Cotton Corners complex. Stay left after the middle corner — tracking out here ruins the final turn. Use the whole of the wide inside curb (the fast line kicks up dirt there), then late-apex the uphill right by the flag station and feed the throttle down the hill: one of the fastest acceleration zones on the track. The exit curb is slippery and dusty; run parallel to it rather than on it. Driver Mod works the middle corner with a brief throttle then a touch of left-foot brake to rotate the car without tracking out, and is back on throttle up the hill.",
+      "name": "Cotton Corners 2",
+      "priority": "exit",
+      "tips": [
+        "Stay left for the late apex",
+        "Use all the wide inside curb",
+        {
+          "text": "Late apex the uphill right",
+          "trigger": "apex_early"
+        },
+        {
+          "text": "Feed throttle early down the hill",
+          "trigger": "power"
+        },
+        "Run parallel to the dusty exit curb",
+        {
+          "text": "Touch of left-foot brake rotates it without a lift",
+          "trigger": "coast"
+        }
+      ]
+    },
+    "5": {
+      "character": "The tight flick between Club Corner and Riverside — the braking zone the old version of this guide mislabeled as Riverside. Brake straight and full threshold, clip all of the left curb, and run out of track on the exit. The signature detail is the curb jump: brake early enough to be back on throttle as you cross it, because throttle settles the landing — coast over it and the car bounces unsettled. Smooth hands and keep accelerating through; momentum should carry you to the outside curb, and if it doesn't, the entry was too slow. High power: start at about a tenth throttle over the jump and build. Wheels off: straighten the hands and don't try to save it.",
+      "name": "Bus Stop",
+      "priority": "entry",
+      "tips": [
+        {
+          "text": "Brake straight, full threshold",
+          "trigger": "brake"
+        },
+        "Clip all of the left curb",
+        "On throttle at the curb jump — it settles the landing (Driver Mod)",
+        "Run out of track on exit",
+        "Smooth hands, accelerate through it",
+        "Wheels off: straighten hands, don't save"
+      ]
+    },
+    "6": {
+      "character": "Steep uphill threshold-braking zone — the hill itself helps scrub speed, so brake as late and hard as the car allows, just shy of ABS. The car goes very light over the crest and, done right, drifts in a neutral four-wheel slide over the top. Turning in late or missing the apex curb delays throttle badly, and exit speed is everything: from the crest it is full throttle down the hill and through the following left kink. Driver Mod stresses the apex is blind: turn in just late enough to line the exit up in a straight line and get on throttle just after the crest — the overshoot here is famous enough that the run-off beyond it is called the splitter graveyard.",
+      "name": "Phil Hill",
+      "priority": "exit",
+      "tips": [
+        "Threshold brake up the steep hill",
+        {
+          "text": "Brake as late as the car allows",
+          "trigger": "brake"
+        },
+        "Clip the apex curb at crest",
+        "Let it drift neutral over crest",
+        {
+          "text": "Full throttle from crest to bottom",
+          "trigger": "power"
+        },
+        "Blind apex — turn in late enough to straighten the exit (Driver Mod)"
+      ]
+    },
+    "7": {
+      "character": "The entry half of the big outer loop after Phil Hill — you arrive flat out down the hill past the crest kink. Both primary sources drive the Sweeper as a double apex despite it being drawn as one long late apex, and this zone is the first half of that bargain: brake very late and use the corner's full width as the braking zone, take an early first apex, and rotate the car so the exit half (the next zone) can be all throttle. Giving up a little entry speed pays extremely large dividends on the exit — both sources rank this exit among the most valuable on the lap.",
+      "name": "Sweeper Entry",
+      "priority": "entry",
+      "tips": [
+        {
+          "text": "Brake very late — use the corner's width as the braking zone",
+          "trigger": "brake"
+        },
+        "Early first apex — it's a double apex",
+        "Flat downhill into it",
+        "Rotate it early — the exit half is the payoff"
+      ]
+    },
+    "8": {
+      "character": "The exit half of the Sweeper, and the whole point of the corner: after the first apex, let the car drift out to the very edge of the track, pick up the late second apex, and get the throttle down and keep it down toward the Esses. The outer edge ends in sand — dip a wheel off and it spins — so the drift out to the edge is a precision target, not a suggestion. What this zone gains carries all the way down to Sunset.",
+      "name": "Sweeper Exit",
+      "priority": "exit",
+      "tips": [
+        "Run out to the very edge — the sand past it spins you",
+        "Late second apex, then commit",
+        {
+          "text": "Exit is everything — get on throttle and stay on it",
+          "trigger": "power"
+        },
+        "Set up the Esses from the exit"
+      ]
+    },
+    "9": {
+      "character": "Final corner onto the main straight, and exit speed sets your trap speed at start/finish. Threshold-brake to a mid apex and drop into the divot, where traction comes back; the exit then loses grip again and gets slippery on the rumble strip, so the throttle must be feathered even while you track all the way out and use the strip. Sources disagree on that apex dip: FTDA uses it for grip, while Driver Mod warns the dip unsettles the car and bends wheels and says stay out of it nine times out of ten — treat it as suspect until your own laps say otherwise. Driver Mod also ranks Sunset the lap's biggest PB-killer, mostly through head games: brake a touch early, stay calm, throttle at the apex. And if you overshoot, go off in a straight line — fighting it back loses the rear toward the pit wall. Boosted adds a late apex and warns to keep the right wheel off the entry curbing under braking; it is slippery and pitches the car sideways.",
+      "name": "Sunset",
+      "priority": "exit",
+      "tips": [
+        "Threshold brake to a mid apex",
+        "Drop into the divot for grip",
+        "Feather throttle on the slippery exit",
+        "Use all the road out",
+        "Keep the right wheel off the slippery entry curb under braking (Boosted)",
+        {
+          "text": "Brake a touch early — greed here kills PBs",
+          "trigger": "brake"
+        }
+      ]
+    }
+  }
+}

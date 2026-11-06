@@ -1,1 +1,204 @@
-{"layout_notes":["Video is from February 2022, before the repave: Tomo calls the surface extremely low-grip and dusty, a track that drives slower than it looks. He noted in a later comment that the 2023 repave improved grip a lot — treat the low-grip warnings as character, not gospel.","Curbs are friendly almost everywhere at Laguna — use all of them. The exceptions his lap flags: Turn 5's exit curb sits at a different height and can pull the car right, Turn 10's exit curb is flat against a cambered track and can pull the car left, and the yellow anti-cut curbs want the painted curb beside them used instead.","Turn 7 and Rainey Curve (Turn 9) are not corners on their own in the sim map — Turn 7 is the Corkscrew's braking zone, and Rainey is the downhill run from the Corkscrew to Turn 10. Their notes sit in unmatched."],"source":{"car":"Honda Civic Si (2017) and Honda Civic TCR (in-car segments)","channel":"ASMotorsports","layout_note":"Video walks the full 11-turn course; the sim profile detects 8 zones, so Turn 1's crest, the Turn 7 climb and Rainey Curve (Turn 9) are carried under unmatched.","title":"TRACK TIPS - Laguna Seca | ASM + TOMO Coaching","url":"https://www.youtube.com/watch?v=OwTe_LxC5RE"},"track":"ks_laguna_seca","unmatched":[{"between":"Start/finish and Andretti Hairpin","corner":"Turn 1 (the crest)","tips":["Apex the end of the pit wall and stay left","The car goes light over the crest — plan for it drifting right","Big-power cars: run the middle and angle at the top of the crest instead of hugging the wall"]},{"between":"Turn 6 and Corkscrew","corner":"Turn 7 and the climb","tips":["Gantry cheat code: pass under its second cross-structure and you're placed for the crest","Cross diagonally left to right to make the Corkscrew braking zone as straight as possible","Brake between the end of the left curb and the start of the right one","Fast cars brake in two stages — hard before the crest, ease over it so you don't trip ABS or lock a tire, hard again after"]},{"between":"Corkscrew and Turn 10","corner":"Rainey Curve (Turn 9)","tips":["Hard on power out of 8A, then work the car right — at least mid-track under the pedestrian bridge","Tighter is better: the camber works for you and faster cars cut real distance off the entry","There is no brake zone or turn-in point — balance speed with a touch of brake and maintenance throttle and keep the momentum rolling","Tuck the left side against the big yellow anti-cut at the apex and let the elevation hook the car through","No breather before Turn 10 — any pause leaves you behind for it"]}],"zones":{"1":{"character":"Laguna's Turn 2, a downhill double-apex hairpin. The braking zone falls away steeply — more than video shows — and the standing trap is charging in deep and hanging wide. It drives as two apexes: early turn-in, let the car run a touch past the first curb so it Vs and rotates, then down to the second apex and feed the power out. Very low-power cars may prefer a single late apex instead.","name":"Andretti Hairpin","priority":"balanced","tips":["Brake at the 3 board or the start of the curb — earlier than you think",{"text":"Don't charge the hairpin — braking deep just hangs you wide","trigger":"brake"},{"text":"Turn in at the 1 board — early apex, V it to the second apex","trigger":"apex_late"},"Clip both apex curbs and use all the exit curb",{"text":"Feed the power off the second apex","trigger":"power"}]},"2":{"character":"Flat, slow, and more than 90 degrees, with no elevation to help. A get-through-it corner rather than one to attack: light braking, early turn-in, float the car in and roll speed.","name":"Turn 3","priority":"balanced","tips":["Set up left early off the hairpin — drive straight at the 3 board",{"text":"Light brake pressure only — float it in, don't charge","trigger":"brake"},{"text":"Turn in earlier than you think","trigger":"apex_late"},"All the inside curb, right down to the yellow anti-cut","Use all the exit curb"]},"3":{"character":"Turn 3's faster twin — under 90 degrees and flat. Braking belongs before turn-in; then float it through a central apex with a touch of maintenance throttle to keep the car composed. Its exit feeds one of the longest runs on the track, up to Turn 5, so the exit is the point of the corner.","name":"Turn 4","priority":"exit","tips":[{"text":"Braking done before turn-in — roll off and float it in","trigger":"brake"},{"text":"A breath of maintenance throttle settles it mid-corner","trigger":"coast"},"Central apex — all the apex curb, all the track-out curb",{"text":"Commit to power early — the run to Turn 5 starts here","trigger":"power"}]},"4":{"character":"Uphill left that gains camber and elevation all the way to the apex — the road catches the car. The pedestrian bridge overhead is the brake reference, roughly the 3 board, with turn-in toward the 1 board. Hook the apex tight against the anti-cut curb and stay tight on exit, where the camber keeps helping. One unfriendly curb here: the exit curb sits at a different height and can tug the car right.","name":"Turn 5","priority":"exit","tips":["Brake at the pedestrian bridge; turn in toward the 1 board",{"text":"Turn in a touch early — let the camber catch the car","trigger":"apex_late"},{"text":"Trailing in is right here — just hook the apex tight against the curb","trigger":"coast"},{"text":"Give it a beat at the apex to finish rotating, then power off straight","trigger":"power"},"Stay tight on exit — the camber helps, the exit curb can pull you right"]},"5":{"character":"The fast blind left over the hill — a make-or-break corner with a climb in and a steeper climb out, so minimum speed is everything. It stays invisible until past the bridge; the turn-in cue is the yellow anti-cut curb appearing. Braking is light, straight-line, and finished before turn-in. The apex sits in a compression pocket full of camber that surges grip as the car settles — that is the moment to get hard on the throttle. A late turn-in or too much entry speed misses the pocket entirely, and the grip leaves as fast as the camber does on exit.","name":"Turn 6","priority":"balanced","tips":["Brake around the bridge — light, straight, done before turn-in",{"text":"Get the braking finished early — balance it on throttle from turn-in","trigger":"brake"},{"text":"Turn in the moment the yellow anti-cut shows past the bridge","trigger":"apex_late"},"Use the painted curb; stay off the yellow anti-cut",{"text":"The apex compression is grip — get hard on the throttle as it settles","trigger":"power"},"Use every inch of the added exit curbing — grip leaves with the camber"]},"6":{"character":"Turns 8 and 8A, the drop. Brake in a straight line and tuck into the pocket at the Turn 8 curb — staying wide for a late turn-in is the wrong instinct, and from the crest you can drive almost straight at the top apex, since the outside has less camber and grip and a sharper turn to make. The corner is aim, not speed: iconic, but it doesn't make or break the lap. The known trick is the third tree on the left — point the nose at it, straighten the wheel, and let the car fall. As it compresses at the bottom, hands back to the right and get aggressively on the power for the run downhill.","name":"Corkscrew","priority":"balanced","tips":["Brake straight and tuck into the pocket at the Turn 8 curb — not wide and late","From the crest, drive straight at the top apex",{"text":"Aim the nose at the third tree on the left, straighten the wheel, and drop","trigger":"apex_late"},{"text":"As it compresses at the bottom, hands back right and get aggressively on the power","trigger":"power"},"Feed the wheel in slowly at the top; let the camber hook it around"]},"7":{"character":"Fast downhill right where the braking reference is the alternate pit-entry access road — most cars can't brake later than it. Braking is light and early, and so is turn-in: the remaining elevation finishes the corner, and hanging wide to drop in late kills the momentum. Massive camber in the middle slings the car through, but there is none of it on entry and none on exit, so turn in anticipating the grip arriving. One trap on exit: the track is cambered but the curb is flat, and left-side tires on it can pull the car off to the left.","name":"Turn 10","priority":"balanced","tips":["Brake at the pit-entry access road — most cars can't go later",{"text":"Light and early — the elevation finishes the corner for you","trigger":"brake"},{"text":"Turn in earlier than you think and fall into it — hanging wide kills momentum","trigger":"apex_late"},"Use the curbs and let the mid-corner camber sling it through","Exit curb is flat against a cambered track — straighten your hands and let it float"]},"8":{"character":"The slowest corner on the track, fed by downhill momentum and gravity — you arrive faster than you want to be going. A basic corner whose job is to not throw the lap away: brake early on the right side, take a late apex, and get off it clean, because a long stretch of front straight runs before the timing beam. The one nuance is the drop right at the apex: arrive already hooked up and turned and the front axle crosses it, gains a surge of steering grip, and you can power off. Arrive with the front pushing and you're hung for the whole corner.","name":"Turn 11","priority":"exit","tips":[{"text":"Brake at the 3 board — gravity is feeding you in faster than it feels","trigger":"brake"},"Late apex — the run to the start/finish line is the point",{"text":"Get it turned before the apex drop, then power off the grip surge","trigger":"power"},"If it's pushing before the drop you're hung — eyes up to the start/finish stand"]}}}
+{
+  "layout_notes": [
+    "Video is from February 2022, before the repave: Tomo calls the surface extremely low-grip and dusty, a track that drives slower than it looks. He noted in a later comment that the 2023 repave improved grip a lot — treat the low-grip warnings as character, not gospel.",
+    "Curbs are friendly almost everywhere at Laguna — use all of them. The exceptions his lap flags: Turn 5's exit curb sits at a different height and can pull the car right, Turn 10's exit curb is flat against a cambered track and can pull the car left, and the yellow anti-cut curbs want the painted curb beside them used instead.",
+    "Turn 7 and Rainey Curve (Turn 9) are not corners on their own in the sim map — Turn 7 is the Corkscrew's braking zone, and Rainey is the downhill run from the Corkscrew to Turn 10. Their notes sit in unmatched."
+  ],
+  "source": {
+    "car": "Honda Civic Si (2017) and Honda Civic TCR (in-car segments)",
+    "channel": "ASMotorsports",
+    "layout_note": "Video walks the full 11-turn course; the sim profile detects 8 zones, so Turn 1's crest, the Turn 7 climb and Rainey Curve (Turn 9) are carried under unmatched.",
+    "title": "TRACK TIPS - Laguna Seca | ASM + TOMO Coaching",
+    "url": "https://www.youtube.com/watch?v=OwTe_LxC5RE"
+  },
+  "track": "ks_laguna_seca",
+  "unmatched": [
+    {
+      "between": "Start/finish and Andretti Hairpin",
+      "corner": "Turn 1 (the crest)",
+      "tips": [
+        "Apex the end of the pit wall and stay left",
+        "The car goes light over the crest — plan for it drifting right",
+        "Big-power cars: run the middle and angle at the top of the crest instead of hugging the wall"
+      ]
+    },
+    {
+      "between": "Turn 6 and Corkscrew",
+      "corner": "Turn 7 and the climb",
+      "tips": [
+        "Gantry cheat code: pass under its second cross-structure and you're placed for the crest",
+        "Cross diagonally left to right to make the Corkscrew braking zone as straight as possible",
+        "Brake between the end of the left curb and the start of the right one",
+        "Fast cars brake in two stages — hard before the crest, ease over it so you don't trip ABS or lock a tire, hard again after"
+      ]
+    },
+    {
+      "between": "Corkscrew and Turn 10",
+      "corner": "Rainey Curve (Turn 9)",
+      "tips": [
+        "Hard on power out of 8A, then work the car right — at least mid-track under the pedestrian bridge",
+        "Tighter is better: the camber works for you and faster cars cut real distance off the entry",
+        "There is no brake zone or turn-in point — balance speed with a touch of brake and maintenance throttle and keep the momentum rolling",
+        "Tuck the left side against the big yellow anti-cut at the apex and let the elevation hook the car through",
+        "No breather before Turn 10 — any pause leaves you behind for it"
+      ]
+    }
+  ],
+  "zones": {
+    "1": {
+      "character": "Laguna's Turn 2, a downhill double-apex hairpin. The braking zone falls away steeply — more than video shows — and the standing trap is charging in deep and hanging wide. It drives as two apexes: early turn-in, let the car run a touch past the first curb so it Vs and rotates, then down to the second apex and feed the power out. Very low-power cars may prefer a single late apex instead.",
+      "name": "Andretti Hairpin",
+      "priority": "balanced",
+      "tips": [
+        "Brake at the 3 board or the start of the curb — earlier than you think",
+        {
+          "text": "Don't charge the hairpin — braking deep just hangs you wide",
+          "trigger": "brake"
+        },
+        {
+          "text": "Turn in at the 1 board — early apex, V it to the second apex",
+          "trigger": "apex_late"
+        },
+        "Clip both apex curbs and use all the exit curb",
+        {
+          "text": "Feed the power off the second apex",
+          "trigger": "power"
+        }
+      ]
+    },
+    "2": {
+      "character": "Flat, slow, and more than 90 degrees, with no elevation to help. A get-through-it corner rather than one to attack: light braking, early turn-in, float the car in and roll speed.",
+      "name": "Turn 3",
+      "priority": "balanced",
+      "tips": [
+        "Set up left early off the hairpin — drive straight at the 3 board",
+        {
+          "text": "Light brake pressure only — float it in, don't charge",
+          "trigger": "brake"
+        },
+        {
+          "text": "Turn in earlier than you think",
+          "trigger": "apex_late"
+        },
+        "All the inside curb, right down to the yellow anti-cut",
+        "Use all the exit curb"
+      ]
+    },
+    "3": {
+      "character": "Turn 3's faster twin — under 90 degrees and flat. Braking belongs before turn-in; then float it through a central apex with a touch of maintenance throttle to keep the car composed. Its exit feeds one of the longest runs on the track, up to Turn 5, so the exit is the point of the corner.",
+      "name": "Turn 4",
+      "priority": "exit",
+      "tips": [
+        {
+          "text": "Braking done before turn-in — roll off and float it in",
+          "trigger": "brake"
+        },
+        {
+          "text": "A breath of maintenance throttle settles it mid-corner",
+          "trigger": "coast"
+        },
+        "Central apex — all the apex curb, all the track-out curb",
+        {
+          "text": "Commit to power early — the run to Turn 5 starts here",
+          "trigger": "power"
+        }
+      ]
+    },
+    "4": {
+      "character": "Uphill left that gains camber and elevation all the way to the apex — the road catches the car. The pedestrian bridge overhead is the brake reference, roughly the 3 board, with turn-in toward the 1 board. Hook the apex tight against the anti-cut curb and stay tight on exit, where the camber keeps helping. One unfriendly curb here: the exit curb sits at a different height and can tug the car right.",
+      "name": "Turn 5",
+      "priority": "exit",
+      "tips": [
+        "Brake at the pedestrian bridge; turn in toward the 1 board",
+        {
+          "text": "Turn in a touch early — let the camber catch the car",
+          "trigger": "apex_late"
+        },
+        {
+          "text": "Trailing in is right here — just hook the apex tight against the curb",
+          "trigger": "coast"
+        },
+        {
+          "text": "Give it a beat at the apex to finish rotating, then power off straight",
+          "trigger": "power"
+        },
+        "Stay tight on exit — the camber helps, the exit curb can pull you right"
+      ]
+    },
+    "5": {
+      "character": "The fast blind left over the hill — a make-or-break corner with a climb in and a steeper climb out, so minimum speed is everything. It stays invisible until past the bridge; the turn-in cue is the yellow anti-cut curb appearing. Braking is light, straight-line, and finished before turn-in. The apex sits in a compression pocket full of camber that surges grip as the car settles — that is the moment to get hard on the throttle. A late turn-in or too much entry speed misses the pocket entirely, and the grip leaves as fast as the camber does on exit.",
+      "name": "Turn 6",
+      "priority": "balanced",
+      "tips": [
+        "Brake around the bridge — light, straight, done before turn-in",
+        {
+          "text": "Get the braking finished early — balance it on throttle from turn-in",
+          "trigger": "brake"
+        },
+        {
+          "text": "Turn in the moment the yellow anti-cut shows past the bridge",
+          "trigger": "apex_late"
+        },
+        "Use the painted curb; stay off the yellow anti-cut",
+        {
+          "text": "The apex compression is grip — get hard on the throttle as it settles",
+          "trigger": "power"
+        },
+        "Use every inch of the added exit curbing — grip leaves with the camber"
+      ]
+    },
+    "6": {
+      "character": "Turns 8 and 8A, the drop. Brake in a straight line and tuck into the pocket at the Turn 8 curb — staying wide for a late turn-in is the wrong instinct, and from the crest you can drive almost straight at the top apex, since the outside has less camber and grip and a sharper turn to make. The corner is aim, not speed: iconic, but it doesn't make or break the lap. The known trick is the third tree on the left — point the nose at it, straighten the wheel, and let the car fall. As it compresses at the bottom, hands back to the right and get aggressively on the power for the run downhill.",
+      "name": "Corkscrew",
+      "priority": "balanced",
+      "tips": [
+        "Brake straight and tuck into the pocket at the Turn 8 curb — not wide and late",
+        "From the crest, drive straight at the top apex",
+        {
+          "text": "Aim the nose at the third tree on the left, straighten the wheel, and drop",
+          "trigger": "apex_late"
+        },
+        {
+          "text": "As it compresses at the bottom, hands back right and get aggressively on the power",
+          "trigger": "power"
+        },
+        "Feed the wheel in slowly at the top; let the camber hook it around"
+      ]
+    },
+    "7": {
+      "character": "Fast downhill right where the braking reference is the alternate pit-entry access road — most cars can't brake later than it. Braking is light and early, and so is turn-in: the remaining elevation finishes the corner, and hanging wide to drop in late kills the momentum. Massive camber in the middle slings the car through, but there is none of it on entry and none on exit, so turn in anticipating the grip arriving. One trap on exit: the track is cambered but the curb is flat, and left-side tires on it can pull the car off to the left.",
+      "name": "Turn 10",
+      "priority": "balanced",
+      "tips": [
+        "Brake at the pit-entry access road — most cars can't go later",
+        {
+          "text": "Light and early — the elevation finishes the corner for you",
+          "trigger": "brake"
+        },
+        {
+          "text": "Turn in earlier than you think and fall into it — hanging wide kills momentum",
+          "trigger": "apex_late"
+        },
+        "Use the curbs and let the mid-corner camber sling it through",
+        "Exit curb is flat against a cambered track — straighten your hands and let it float"
+      ]
+    },
+    "8": {
+      "character": "The slowest corner on the track, fed by downhill momentum and gravity — you arrive faster than you want to be going. A basic corner whose job is to not throw the lap away: brake early on the right side, take a late apex, and get off it clean, because a long stretch of front straight runs before the timing beam. The one nuance is the drop right at the apex: arrive already hooked up and turned and the front axle crosses it, gains a surge of steering grip, and you can power off. Arrive with the front pushing and you're hung for the whole corner.",
+      "name": "Turn 11",
+      "priority": "exit",
+      "tips": [
+        {
+          "text": "Brake at the 3 board — gravity is feeding you in faster than it feels",
+          "trigger": "brake"
+        },
+        "Late apex — the run to the start/finish line is the point",
+        {
+          "text": "Get it turned before the apex drop, then power off the grip surge",
+          "trigger": "power"
+        },
+        "If it's pushing before the drop you're hung — eyes up to the start/finish stand"
+      ]
+    }
+  }
+}
