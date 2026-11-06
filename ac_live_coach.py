@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.21.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.22.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2102,6 +2102,7 @@ class Coach:
         self._guide_tour_done = False  # v2.18.0: guided lap finished (set_profile re-arms)
         self._guide_tour_rearm = False # v2.18.0: tour lap was muted; tour gets the next lap
         self._tour_corners = set()     # v2.18.0: corners the tour has handled this lap
+        self._tour_this_lap = False    # v2.22.0: the lap in progress is the guided lap
         self._last_summary_leak = None  # v2.14.0: last summary's biggest leak (num)
         self._exit_line_count = {}     # v2.14.0: exit lines spoken per corner, session
         self._exit_spoken = 0
@@ -2352,6 +2353,7 @@ class Coach:
         self._guide_tour_done = False
         self._guide_tour_rearm = False
         self._tour_corners = set()
+        self._tour_this_lap = False
         if (profile.guide and profile.corners
                 and len((profile.guide.get("zones") or {}))
                 != len(profile.corners)):
@@ -2487,6 +2489,7 @@ class Coach:
                 self._pump_finishes(t)
 
     def reset_lap(self):
+        self._tour_this_lap = False    # v2.22.0: snapshot already taken
         self.bins = LapBins()
         self.lap_valid_time = True
         self._off_events = []        # closed 2+ tyres-off excursions this lap
@@ -3027,10 +3030,29 @@ class Coach:
             else:
                 self._service_tone_pending(t, pos)
                 self._maybe_brake_tone(t, pos)
-                self._maybe_approach_cue(t, pos)
-                self._maybe_guide_tour(t, pos)
-                self._maybe_guide_tip(t, pos)
-                self._maybe_exit_feedback(t, pos)
+                # v2.22.0 (Albert): on the guided lap the guide
+                # REPLACES coaching -- no approach cues, exit
+                # feedback or symptom tips, and the tour speaks
+                # exclusively (queued, never skipped for a busy
+                # channel) so every guided corner gets its line.
+                # The tour only takes a lap that starts with a
+                # clean reference already in place: a lap still
+                # setting the reference is never the tour lap.
+                touring = (self._guide_tour_active()
+                           and not getattr(self.profile, "ref_dirty",
+                                           False)
+                           and getattr(self.profile, "guide", None)
+                           and any(guide_tour_line(self.profile.guide,
+                                   c["num"])
+                                   for c in self.profile.corners))
+                if touring:
+                    self._tour_this_lap = True
+                    self._maybe_guide_tour(t, pos, exclusive=True)
+                else:
+                    self._maybe_approach_cue(t, pos)
+                    self._maybe_guide_tour(t, pos)
+                    self._maybe_guide_tip(t, pos)
+                    self._maybe_exit_feedback(t, pos)
 
     @staticmethod
     def _crossed(prev_bin, cur_bin, target):
@@ -3110,6 +3132,7 @@ class Coach:
             "slip_events": list(self._slip_events),
             "penalty": bool(self._lap_penalty),
             "muted": bool(self._lap_muted),
+            "tour": bool(self._tour_this_lap),
         })
         self._ict_peak_ms = 0
         self.reset_lap()
@@ -3156,14 +3179,25 @@ class Coach:
         # chance to speak -- re-arm it for one more lap rather than
         # losing the tour for the whole session.
         if not self._guide_tour_done:
+            # v2.22.0: ref state here is the state the finished
+            # lap was driven under (this lap's own reference
+            # update lands further down). A lap driven without a
+            # clean reference was the reference-setting lap --
+            # the tour never runs on it, so re-arm the tour for
+            # the next lap instead of spending it.
+            _prof = self.profile
+            had_clean_ref = bool(_prof is not None and _prof.ref
+                                 and not getattr(_prof, "ref_dirty",
+                                                 False))
             if self.lap_number == 2:
-                if rec.get("muted"):
+                if rec.get("muted") or not had_clean_ref:
                     self._guide_tour_rearm = True
                 else:
                     self._guide_tour_done = True
             elif self.lap_number >= 3 and self._guide_tour_rearm:
-                self._guide_tour_rearm = False
-                self._guide_tour_done = True
+                if rec.get("tour") or had_clean_ref:
+                    self._guide_tour_rearm = False
+                    self._guide_tour_done = True
         spd, brk, gas = rec["spd"], rec["brk"], rec["gas"]
         dist = rec["dist_m"]
         p = self.profile
@@ -3297,6 +3331,9 @@ class Coach:
                 self.log("lap", lap_rec)
                 if out_lap:
                     print(f"[lap] out/in lap ({fmt_lap(lap_time)}) -- no coaching")
+                elif rec.get("tour"):
+                    print(f"[lap] guided lap ({fmt_lap(lap_time)}) -- "
+                          f"guide only, no summary")
                 else:
                     self._speak_lap_summary(lap_time, results)
                 # v2.5.1: the report outline follows the latest
@@ -3649,9 +3686,9 @@ class Coach:
             return False
         if self.lap_number == 1:
             return True
-        return bool(self._guide_tour_rearm and self.lap_number == 2)
+        return bool(self._guide_tour_rearm and self.lap_number >= 2)
 
-    def _maybe_guide_tour(self, t, pos):
+    def _maybe_guide_tour(self, t, pos, exclusive=False):
         # v2.18.0 guided lap (Albert's idea, Nov 5 2026): on the
         # tour lap, speak ONE short guide line per guided corner
         # as the car approaches it -- the human-coach knowledge up
@@ -3695,18 +3732,20 @@ class Coach:
                 continue
             if self._in_any_zone(cur_bin):
                 continue  # mid-corner in a sequence: hold until clear
-            if num in self.approach_fired:
+            if num in self.approach_fired and not exclusive:
                 # A data cue already claimed this corner on this
-                # lap; his own numbers outrank the book.
+                # lap; his own numbers outrank the book. (On the
+                # v2.22.0 exclusive guided lap there are no data
+                # cues -- the guide owns every corner.)
                 self._tour_corners.add(num)
                 self.log("guide_line_skipped",
                          {"num": num, "reason": "cue"})
                 break
-            if not self._cooldown_ok(t):
+            if not exclusive and not self._cooldown_ok(t):
                 continue  # the speech gap may clear before the
                 # drop point; if not, the corner is consumed there
             self._tour_corners.add(num)
-            if not self._speaker_idle():
+            if not exclusive and not self._speaker_idle():
                 self.log("guide_line_skipped",
                          {"num": num, "reason": "busy"})
             else:

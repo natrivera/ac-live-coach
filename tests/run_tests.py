@@ -1174,6 +1174,48 @@ _oc, _oprof = new_coach("othertrack__car")
 check("history relabel leaves other tracks alone",
       _oc.history["corners"].get("Riverside") == {"sum": 3.0, "n": 7})
 
+# ---- guided lap v2.22.0: exclusive tour + reference-lap gate ----
+gx = tour_coach("testGX__car")
+gx.lap_number = 1
+gx.speaker.busy = True
+gx._maybe_guide_tour(1000.0, POS1, exclusive=True)
+check("exclusive tour speaks even when the channel is busy",
+      gx.speaker.lines == ["Turn 1: power side one"])
+gx2 = tour_coach("testGX2__car")
+gx2.lap_number = 1
+gx2.approach_fired.add(1)
+gx2._maybe_guide_tour(1000.0, POS1, exclusive=True)
+check("exclusive tour does not yield to a data cue",
+      gx2.speaker.lines == ["Turn 1: power side one"])
+gx3 = tour_coach("testGX3__car")
+gx3.lap_number = 1
+gx3.last_spoke_t = 1000.0   # speech cooldown active
+gx3._maybe_guide_tour(1000.0, POS1, exclusive=True)
+check("exclusive tour ignores the speech cooldown",
+      gx3.speaker.lines == ["Turn 1: power side one"])
+ec, _ep = new_coach("testE__car")
+ec._finalize_lap(make_rec(), 100.0, "test")     # sets the reference
+_ep.ref_dirty = True                            # lap 2 driven under it
+ec._finalize_lap(make_rec(), 101.0, "test")
+check("reference-setting lap re-arms the tour",
+      ec.lap_number == 2 and ec._guide_tour_rearm
+      and not ec._guide_tour_done and ec._guide_tour_active())
+_trec = make_rec(); _trec["tour"] = True
+ec._finalize_lap(_trec, 102.0, "test")
+check("tour closes after the re-armed tour lap runs",
+      ec.lap_number == 3 and ec._guide_tour_done
+      and not ec._guide_tour_rearm)
+sc, _sp = new_coach("testS__car")
+sc._finalize_lap(make_rec(), 100.0, "test")
+_n0 = len(sc.speaker.lines)
+_srec = make_rec(); _srec["tour"] = True
+sc._finalize_lap(_srec, 101.0, "test")
+check("guided lap gets no spoken summary",
+      len(sc.speaker.lines) == _n0)
+sc._finalize_lap(make_rec(), 102.0, "test")
+check("the lap after the guided lap is summarised again",
+      len(sc.speaker.lines) > _n0)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
