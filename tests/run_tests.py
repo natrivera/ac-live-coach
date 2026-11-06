@@ -1540,6 +1540,39 @@ check("names write/read roundtrip",
 check("choice coercion returns the typed value",
       panel._coerce_choice("-1", [-1, 0, 1]) == -1
       and panel._coerce_choice("brake", ["all", "brake"]) == "brake")
+
+# ---- v2.28.0: extended loss, explained-share honesty, outcomes ----
+_hf, _hp9 = new_coach("testHF__car")
+_unx = {"num": 2, "name": "Turn 2", "loss": 0.75, "off": False,
+        "brake_delta_m": -12.0, "throttle_delta_m": None,
+        "coast_s": 0.0, "coast_entry_s": 0.0, "coast_exit_s": 0.5,
+        "apex_delta_kmh": -1.0, "entry_delta_kmh": 0.0,
+        "apex_shift_m": 0.0, "lockup_s": 0.0, "spin_s": 0.0,
+        "peak_brake": 0.9, "peak_brake_ref": 1.0, "release_s": 0.2,
+        "release_ref_s": 0.2, "mid_lift": False, "steer_rev_delta": 0,
+        "ref_apex_kmh": 90.0, "span_m": 200.0}
+check("a symptom explaining <40% of the loss is not named as cause",
+      _hf._honest_fix(_unx)
+      == "Turn 2: the loss is on the exit — cause unclear "
+         "from the pedals")
+_exp = dict(_unx, brake_delta_m=-48.0, loss=0.7, coast_exit_s=0.0)
+check("a symptom explaining the loss keeps its fix",
+      _hf._honest_fix(_exp) == "Turn 2: brake later")
+_sm, _sp9 = new_coach("testSM__car")
+_sm._speak_lap_summary(100.0, [], outcomes=[{
+    "name": "Phil Hill", "kind": "entry", "unit": "kmh",
+    "base_disp": -22.0, "follow_disp": 3.0}])
+check("an objective turning effective is spoken in the summary",
+      any("that's better" in ln and "Phil Hill" in ln
+          for ln in _sm.speaker.lines))
+_ap, _pp9 = new_coach("testAP__car")
+_ap._finalize_lap(make_rec(), 100.0, "test")
+_ap.corner_history = {1: [dict(BASE, loss=0.10, loss_ext=0.50,
+                               off=False)]}
+_seg = m.build_report_html(_ap)
+_seg = _seg[_seg.find("Corner data"):_seg.find("Session summary")]
+check("report average loss is the extended loss",
+      "+0.50s" in _seg)
 m.APP_DIR, m.TRACKS_DIR = _old_app, _old_tracks
 _stop = threading.Event()
 _stat = {}

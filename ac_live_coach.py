@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.27.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.28.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -3019,7 +3019,7 @@ class Coach:
         for num, hist in self.corner_history.items():
             clean = [r for r in hist if not r.get("off")]
             if clean:
-                avg = sum(r["loss"] for r in clean) / len(clean)
+                avg = sum(r.get("loss_ext", r["loss"]) for r in clean) / len(clean)
                 if avg >= float(self.cfg.get("min_loss_to_speak", 0.15)):
                     leaks.append((avg, clean[-1]["name"]))
         leaks.sort(key=lambda x: -x[0])
@@ -3550,6 +3550,7 @@ class Coach:
                 self._finalize_lap(rec, rec["dur_s"], "timer_fallback")
 
     def _finalize_lap(self, rec, lap_time, source):
+        _outcomes = []
         self.lap_number += 1
         # v2.18.0 guided-lap bookkeeping: the tour runs on the lap
         # in progress while lap_number == 1 (the session's second
@@ -3694,6 +3695,8 @@ class Coach:
                         if len(self.corner_history[r["num"]]) > 8:
                             self.corner_history[r["num"]].pop(0)
                     self._evaluate_objectives(results)   # v2.25.0
+                    _outcomes = [o for o in self._objectives
+                                 if o.pop("_just_effective", False)]
                     # v2.1.0: fold the lap into the persistent
                     # per-combo history (clean corners only).
                     if self.history is not None:
@@ -3711,7 +3714,8 @@ class Coach:
                                 "loss_ext", r["loss"]), 3)
                             e["n"] += 1
                         self._save_history()
-                total_loss = sum(max(0.0, r["loss"]) for r in results)
+                total_loss = sum(max(0.0, r.get(
+                    "loss_ext", r["loss"])) for r in results)
                 lap_rec = {"lap": self.lap_number, "time_s": lap_time,
                            "corners": results, "total_corner_loss": total_loss,
                            "time_source": source, "dur_s": rec["dur_s"],
@@ -3731,7 +3735,8 @@ class Coach:
                         lap_time, results,
                         blocked=("off" if rec.get("off_events")
                                  else "penalty" if rec.get("penalty")
-                                 else None))
+                                 else None),
+                        outcomes=_outcomes)
                 # v2.5.1: the report outline follows the latest
                 # CLEAN counted lap. It used to freeze on the first
                 # lap ever driven on the combo, so an exploratory
@@ -3893,7 +3898,7 @@ class Coach:
             clean = [r for r in hist if not r.get("off")]
             if not clean:
                 continue
-            avg = sum(r["loss"] for r in clean) / len(clean)
+            avg = sum(r.get("loss_ext", r["loss"]) for r in clean) / len(clean)
             latest = hist[-1]
             cue_src = latest if not latest.get("off") else clean[-1]
             # v2.6.0 steadiness (external review): the v1.2 latest-lap
@@ -3903,7 +3908,7 @@ class Coach:
             # still qualify when another clean lap corroborates the
             # corner (loss >= 0.15 there too). The multi-lap average
             # path is unchanged.
-            corroborated = any(r["loss"] >= 0.15 for r in clean
+            corroborated = any(r.get("loss_ext", r["loss"]) >= 0.15 for r in clean
                                if r is not cue_src)
             cmap = {c["num"]: c for c in self.profile.corners} if self.profile else {}
             if cmap.get(num, {}).get("minor"):
@@ -3928,7 +3933,8 @@ class Coach:
                             or (latest["loss"] >= 0.10 and latest["coast_s"] >= 1.5)))))
                 )
             if qualifies:
-                scored.append((max(avg, cue_src["loss"]), num, cue_src))
+                scored.append((max(avg, cue_src.get(
+                    "loss_ext", cue_src["loss"])), num, cue_src))
         scored.sort(key=lambda x: -x[0])
         return scored
 
@@ -4029,7 +4035,8 @@ class Coach:
                   "coast_entry_s", "coast_exit_s", "apex_delta_kmh",
                   "apex_shift_m", "entry_delta_kmh", "lockup_s",
                   "spin_s", "peak_brake", "release_s",
-                  "steer_rev_delta", "steer_work_ratio", "loss"):
+                  "steer_rev_delta", "steer_work_ratio", "loss",
+                  "loss_ext"):
             vals = sorted(r[f] for r in hist if r.get(f) is not None)
             if vals:
                 agg[f] = vals[len(vals) // 2]
@@ -4240,6 +4247,7 @@ class Coach:
             ob["status"] = "inconclusive"
         elif sev_f <= 0.7 * bs and loss_f <= bl + 0.05:
             ob["status"] = "effective"
+            ob["_just_effective"] = True
         elif sev_f <= 0.7 * bs:
             ob["status"] = "behavioral"
         elif sev_f >= 1.15 * bs or loss_f >= bl + 0.15:
@@ -4537,7 +4545,7 @@ class Coach:
                 elif res["loss"] >= min_loss:
                     if (self._sass_eff() >= 2
                             and self._exit_line_count.get(num, 0) >= 1):
-                        _t = tenths_phrase(res["loss"])
+                        _t = tenths_phrase(res.get("loss_ext", res["loss"]))
                         if self._sass_eff() >= 4:
                             line = self._sass_pick(f"exit_again_{num}", [
                                 f"{c['name']} again: lost {_t} there. It's a whole thing with you two.",
@@ -4552,18 +4560,15 @@ class Coach:
                                     f"{c['name']} again: lost {_t} there — a recurring feature.")
                             line = self._sass_pick(f"exit_again_{num}", _pool)
                     else:
-                        line = f"{c['name']}: lost {tenths_phrase(res['loss'])} there"
+                        line = f"{c['name']}: lost {tenths_phrase(res.get('loss_ext', res['loss']))} there"
                     # v2.6.0: say WHY, not just how much -- the live
                     # single-zone analysis already computed the causes
                     # and the old line threw them away until next
                     # lap's approach cue (a review point).
-                    fix = corner_cue(
+                    fix = self._honest_fix(
                         res,
                         priority=guide_priority(
-                            getattr(self.profile, "guide", None), num),
-                        guide=getattr(self.profile, "guide", None),
-                        symptom_tips=bool(self.cfg.get(
-                            "guide_symptom_tips", True)))
+                            getattr(self.profile, "guide", None), num))
                     if fix and ": " in fix:
                         fix_text = fix.split(": ", 1)[1]
                 elif (self._sass_eff() == -1
@@ -4573,7 +4578,7 @@ class Coach:
                     # earns a callout from the same per-lap budget
                     # the losses use -- encouragement, rationed
                     # like everything else on this channel.
-                    _t = tenths_phrase(-res["loss"])
+                    _t = tenths_phrase(-res.get("loss_ext", res["loss"]))
                     line = self._sass_pick("exit_gain", [
                         f"{c['name']}: gained {_t} there — that's the one.",
                         f"{c['name']}: {_t} in hand there. Lovely.",
@@ -4589,7 +4594,7 @@ class Coach:
                     else:
                         _what = "big coast"
                     line = (f"{c['name']}: {_what} there, costing "
-                            f"{tenths_phrase(res['loss'])}")
+                            f"{tenths_phrase(res.get('loss_ext', res['loss']))}")
                 if line:
                     if self._in_any_zone(cur_bin):
                         # v2.24.0: zone_end is clamped to the
@@ -4600,11 +4605,12 @@ class Coach:
                         # the words until the car is clear.
                         self._exit_deferred[num] = {
                             "line": line, "fix_text": fix_text,
-                            "loss": res["loss"],
+                            "loss": res.get("loss_ext", res["loss"]),
                             "end_bin": c["zone_end"]}
                     else:
                         self._speak_exit(t, num, line, fix_text,
-                                         res["loss"], _cap)
+                                         res.get("loss_ext", res["loss"]),
+                                         _cap)
                 else:
                     # Section colour is full-talk only (v2.16.0).
                     sline = (self._maybe_section_line(num)
@@ -4736,7 +4742,51 @@ class Coach:
         self._sass_rot[site] = i + 1
         return pool[i % len(pool)]
 
-    def _speak_lap_summary(self, lap_time, results, blocked=None):
+    def _honest_fix(self, stats, priority=None, brake_only=False):
+        """corner_cue's answer, audited (external review, Nov 6):
+        the winning symptom must actually EXPLAIN a fair share
+        (>= 40%) of the corner's zone loss before the coach names
+        it as the cause. Below that, the honest line names the
+        phase the time went to and admits the pedals don't say
+        why -- instead of a confident wrong cause ('brake later'
+        for a loss that lived on the exit). Two paths are honest
+        by construction and pass unaudited: brake_only mode (the
+        cause is braking by the mode's own definition) and
+        corner_cue's phase path (a phase holding >= 60% of the
+        loss IS the explanation). Returns corner_cue's full
+        'Name: fix' text, or the fallback in the same shape."""
+        fix = corner_cue(
+            stats, brake_only=brake_only, priority=priority,
+            guide=getattr(self.profile, "guide", None),
+            symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
+        loss = stats.get("loss") or 0.0
+        if not fix or brake_only or loss < 0.25:
+            return fix
+        phs = [p for p in stats.get("phases", [])
+               if p.get("loss", 0) >= 0.15]
+        if phs and max(p["loss"] for p in phs) >= 0.6 * loss:
+            return fix
+        pk = _pick_candidate(stats, priority=priority)
+        if pk is None:
+            return fix
+        costs = {k: c for k, _t, c in _cue_candidates(stats)}
+        if costs.get(pk[0], 0.0) >= 0.4 * loss:
+            return fix
+        name = stats.get("name") or "That corner"
+        if ((stats.get("throttle_delta_m") or 0) > 8
+                or (stats.get("coast_exit_s") or 0) >= 0.3):
+            return (f"{name}: the loss is on the exit — "
+                    f"cause unclear from the pedals")
+        if (stats.get("entry_delta_kmh") or 0) <= -3:
+            return (f"{name}: the loss is on the entry — "
+                    f"cause unclear from the pedals")
+        if (stats.get("apex_delta_kmh") or 0) <= -3:
+            return (f"{name}: the loss is mid-corner — "
+                    f"cause unclear from the pedals")
+        return f"{name}: cause unclear from the pedals"
+
+    def _speak_lap_summary(self, lap_time, results, blocked=None,
+                           outcomes=None):
         p = self.profile
         sass = self._sass_eff()
         parts = [f"Lap {fmt_lap_spoken(lap_time)}."]
@@ -4805,18 +4855,27 @@ class Coach:
         if (worst and _wl >= float(self.cfg["min_loss_to_speak"])
                 and self._talk_level() >= 1):
             brake_only = self.cfg.get("focus") == "brake"
-            cue = corner_cue(
+            cue = self._honest_fix(
                 worst, brake_only=brake_only,
                 priority=guide_priority(getattr(self.profile, "guide", None),
-                                        worst.get("num")),
-                guide=getattr(self.profile, "guide", None),
-                symptom_tips=bool(self.cfg.get("guide_symptom_tips", True)))
+                                        worst.get("num")))
             if cue:
                 parts.append(f"Biggest leak: {cue.lower()}, costing {tenths_phrase(_wl)} by the next braking zone.")
                 leak_spoken = True
             elif brake_only:
                 parts.append(f"Biggest leak: {worst['name'].lower()}, costing {tenths_phrase(_wl)} by the next braking zone.")
                 leak_spoken = True
+        if outcomes:
+            _ob = outcomes[0]
+            def _say(u, v):
+                return (_fmt_metric(u, v)
+                        .replace(" m", " metres")
+                        .replace(" s", " seconds"))
+            parts.append(
+                f"{_ob['name']}: that's better — "
+                f"{_KIND_LABEL.get(_ob['kind'], _ob['kind'])} "
+                f"{_say(_ob.get('unit'), _ob.get('base_disp'))} to "
+                f"{_say(_ob.get('unit'), _ob.get('follow_disp'))}.")
         if (leak_spoken and sass >= 2
                 and worst.get("num") is not None
                 and worst.get("num") == self._last_summary_leak):
@@ -4892,7 +4951,7 @@ class Coach:
                         key=lambda kv: -sum(x["loss"] for x in kv[1]) / len(kv[1]))
         lines.append("Corners ranked by average time loss vs your reference:")
         for num, lst in ranked:
-            avg = sum(x["loss"] for x in lst) / len(lst)
+            avg = sum(x.get("loss_ext", x["loss"]) for x in lst) / len(lst)
             if avg >= float(self.cfg["min_loss_to_speak"]):
                 cue = corner_cue(
                     lst[-1],
@@ -5143,7 +5202,8 @@ def build_report_html(coach):
         for c in p.corners:
             hist = coach.corner_history.get(c["num"], [])
             clean = [r for r in hist if not r.get("off")]
-            avg = (sum(r["loss"] for r in clean) / len(clean)) if clean else None
+            avg = (sum(r.get("loss_ext", r["loss"]) for r in clean)
+                   / len(clean)) if clean else None
             stats.append((c, avg, clean[-1] if clean else None))
 
     def loss_color(avg):
