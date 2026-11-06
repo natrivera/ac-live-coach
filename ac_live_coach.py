@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.25.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.26.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -5480,10 +5480,15 @@ the coach doesn't count a save as a technique problem.</p>
 </body></html>"""
 
 
-def run_live(cfg):
+def run_live(cfg, stop_event=None, status=None):
     log, txt_path, jsonl_path, tf, jf = make_logger()
     speaker = Speaker(cfg, log)
     coach = Coach(cfg, speaker, log)
+    if status is not None:
+        status.update({"running": True, "connected": False,
+                       "key": None, "coach": coach, "laps": 0,
+                       "lap_number": 0, "last_s": None,
+                       "best_s": None})
     if speaker.enabled:
         # Load/download the neural voice now, in the pits -- not on
         # the first corner cue (v2.2).
@@ -5525,6 +5530,8 @@ def run_live(cfg):
     report_path = os.path.join(
         os.path.dirname(txt_path),
         os.path.basename(txt_path).replace("debrief_", "report_").replace(".txt", ".html"))
+    if status is not None:
+        status["report_path"] = report_path
     report_state = {"laps": -1, "opened": False}
 
     def open_report_once():
@@ -5575,6 +5582,9 @@ def run_live(cfg):
     last_loop_error_log = 0.0
     try:
         while True:
+            if stop_event is not None and stop_event.is_set():
+                print("\nStopping coach...")
+                break
             if tele is None:
                 try:
                     tele = ACTelemetry()
@@ -5755,6 +5765,16 @@ def run_live(cfg):
                             and coach.profile is not None
                             and coach.profile.ref is not None)):
                     write_report()
+                if status is not None:
+                    _sb = getattr(coach, "_session_best", None)
+                    status.update({
+                        "connected": tele is not None,
+                        "key": current_key,
+                        "lap_number": coach.lap_number,
+                        "laps": len(coach.lap_records),
+                        "last_s": (coach.lap_records[-1].get("time")
+                                   if coach.lap_records else None),
+                        "best_s": (_sb.get("time") if _sb else None)})
                 time.sleep(1 / 30.0)
             except Exception as e:
                 # One bad frame must not end the session (v2.5.3
@@ -5793,6 +5813,8 @@ def run_live(cfg):
                 open_report_once()
         except Exception as e:
             print(f"[report] could not build the session report ({e})")
+        if status is not None:
+            status["running"] = False
 
 
 # --------------------------------------------------------------------------

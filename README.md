@@ -100,6 +100,14 @@ Buttonwillow is built in; everywhere else starts as Turn N.)
 Those log files are the tuning loop: every cue the coach spoke, and
 the numbers behind it, are in there.
 
+## The control panel
+
+Double-click `coach_panel.py` — one window is the whole
+interface: start/stop the coach, see its state, flip toggles
+live, edit corner names, read its log, open the latest report.
+Leave it open across sessions. The plain console launch
+(`ac_live_coach.py`) still works exactly as before.
+
 ## Tuning knobs (coach_config.json)
 
 **Your file outranks the code.** Any line present in your
@@ -185,6 +193,9 @@ sessions and checks their lap counts, bests and headline diagnoses
 against expectations — the regression net for coaching changes.
 
 ## Changelog
+
+### v2.26.0
+- **The control panel** (`coach_panel.py`): the coach's whole interface in one window that stays open across sessions. It hosts the engine itself — Start/Stop in the window, live status (waiting / on track, lap, last, best), and the coach's own printed output in a Log tab. The **Coach toggles** tab flips the main settings live (they mutate the config the running coach reads, and persist to `coach_config.json`; the few that are chosen at engine start — voice on/off, engine, Piper voice — are badged 'applies next launch'). The **Corner names** tab lists any combo's corners against their current names and saves edits to the same names files, applying them to a running session on the spot. Reports still open as HTML in the browser, from the button in the header. The console launch (`ac_live_coach.py`) is unchanged and keeps working as a fallback — the engine is shared, not forked, and gained only a stop event and a status snapshot to make hosting possible.
 
 ### v2.25.0
 - **Coaching effectiveness** (the external review's P1): when an approach cue is heard, the coach opens an *objective* for that corner and symptom — a baseline from the median of the previous clean laps — and judges the laps that follow: behaviour first (did the fault shrink by 30%+?), the corner's extended loss as the guardrail. Results land in the report's Coaching effectiveness section with the review's five plain classifications (effective / behavioral response / no measurable response / negative / inconclusive — inconclusive whenever the telemetry can't carry a verdict), closed objectives persist in the combo history, a previously-effective fault that comes back is flagged as recurred, and one that stays fixed is marked retained. Nothing new is spoken live; this is measurement, not more talking. Also: the lap summary's biggest-leak amount is now phrased as what it is — time gone *by the next braking zone* — and `tests/replay_regression.py` pins three hand-reviewed real sessions as a regression net for coaching changes.

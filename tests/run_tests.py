@@ -1497,6 +1497,56 @@ _html = m.build_report_html(rc2)
 check("report carries the coaching effectiveness section",
       "Coaching effectiveness" in _html and "retained" in _html)
 
+# ---- v2.26.0 panel helpers + stoppable engine ----
+import coach_panel as panel
+import tempfile, threading, time as _time
+_tmpd = tempfile.mkdtemp()
+_old_app, _old_tracks = m.APP_DIR, m.TRACKS_DIR
+m.APP_DIR = _tmpd
+with open(os.path.join(_tmpd, "coach_config.json"), "w") as f:
+    json.dump({"custom_key": 7, "talk_level": 2}, f)
+_pc = dict(m.DEFAULT_CONFIG)
+_pc["talk_level"] = 1
+panel.save_managed(_pc)
+with open(os.path.join(_tmpd, "coach_config.json")) as f:
+    _saved = json.load(f)
+check("panel saves managed keys and preserves the rest of the file",
+      _saved.get("custom_key") == 7 and _saved.get("talk_level") == 1
+      and _saved.get("sass_level") == _pc.get("sass_level"))
+m.TRACKS_DIR = _tmpd2 = tempfile.mkdtemp()
+for _fn in ("zztest__car.json", "zztest__car__history.json",
+            "zztest__names.json", "zztrack__map.json"):
+    open(os.path.join(_tmpd2, _fn), "w").close()
+check("combo list keeps profiles and drops sidecar files",
+      panel.list_combos() == ["zztest__car"])
+check("names stems: classic uses the track, layouts get their own",
+      panel.names_stem("nd_buttonwillow__car") == "nd_buttonwillow"
+      and panel.names_stem("ddm_x__car__layout4130")
+      == "ddm_x__layout4130")
+_wp = panel.write_names("zztest__car", {"1": "Alpha", "2": "Beta"})
+_p2, _mp = panel.read_names("zztest__car")
+check("names write/read roundtrip",
+      _mp == {"1": "Alpha", "2": "Beta"}
+      and os.path.basename(_wp) == "zztest__names.json")
+check("choice coercion returns the typed value",
+      panel._coerce_choice("-1", [-1, 0, 1]) == -1
+      and panel._coerce_choice("brake", ["all", "brake"]) == "brake")
+m.APP_DIR, m.TRACKS_DIR = _old_app, _old_tracks
+_stop = threading.Event()
+_stat = {}
+_ecfg = dict(m.DEFAULT_CONFIG)
+_ecfg["voice_enabled"] = False
+_th = threading.Thread(target=m.run_live,
+                       kwargs={"cfg": _ecfg, "stop_event": _stop,
+                               "status": _stat}, daemon=True)
+_th.start()
+_time.sleep(1.5)
+_stop.set()
+_th.join(timeout=20)
+check("run_live stops on the panel's stop event and reports state",
+      not _th.is_alive() and _stat.get("running") is False
+      and "coach" in _stat)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
