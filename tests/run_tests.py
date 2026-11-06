@@ -659,13 +659,14 @@ _sc2 = _summary_coach(2)
 _worst = [_res(coast_s=2.0, coast_entry_s=1.0, coast_exit_s=1.0)]
 _sc2._speak_lap_summary(101.0, _worst)
 _sc2._speak_lap_summary(101.5, _worst)
+_rep2 = ("Same corner as last lap.", "It was that corner last lap, too.")
 check("sass 2: repeat leak is called out on the second lap",
-      "Same corner as last lap." in _sc2.speaker.lines[-1]
-      and "Same corner as last lap." not in _sc2.speaker.lines[-2])
+      any(s in _sc2.speaker.lines[-1] for s in _rep2)
+      and not any(s in _sc2.speaker.lines[-2] for s in _rep2))
 _sc1b = _summary_coach(1)
 _sc1b._speak_lap_summary(105.0, [])
 check("sass 1: clean lap gets the dry closer",
-      any("Nothing to fix." in ln for ln in _sc1b.speaker.lines))
+      any("nothing to fix" in ln.lower() for ln in _sc1b.speaker.lines))
 
 # ---- talk level + cue priority (v2.16.0) ----
 _spk = object.__new__(m.Speaker)
@@ -698,6 +699,104 @@ _tc0._speak_lap_summary(101.0, _worst)
 check("talk 0: summary drops the leak line entirely",
       not any("Biggest leak" in ln for ln in _tc0.speaker.lines),
       f"got {_tc0.speaker.lines}")
+
+# ---- sass spectrum extended: supportive -1, mean girl 4 (v2.19.0) ----
+def _lvl_coach(level, talk):
+    c = m.Coach(dict(CFG, sass_level=level, talk_level=talk),
+                FakeSpeaker(), lambda *a, **k: None)
+    pr = m.TrackProfile(f"lvl{level}_{talk}__car")
+    c.set_profile(pr)
+    pr.best_lap_s = 100.0
+    return c
+
+check("sass level clamps to -1..4",
+      m.Coach(dict(CFG, sass_level=99), FakeSpeaker(),
+              lambda *a, **k: None)._sass_level() == 4
+      and m.Coach(dict(CFG, sass_level=-7), FakeSpeaker(),
+                  lambda *a, **k: None)._sass_level() == -1)
+check("sass eff: supportive survives talk 1, colour does not",
+      _lvl_coach(-1, 1)._sass_eff() == -1
+      and _lvl_coach(4, 1)._sass_eff() == 0
+      and _lvl_coach(-1, 0)._sass_eff() == 0
+      and _lvl_coach(4, 2)._sass_eff() == 4
+      and _lvl_coach(-1, 2)._sass_eff() == -1)
+
+_mg = _lvl_coach(4, 2)
+_mg._speak_lap_summary(99.0, [])
+check("mean girl: PB line is backhanded",
+      any("New best." in ln and any(s in ln for s in (
+          "broken clock", "find something", "keep up with yourself",
+          "do it again")) for ln in _mg.speaker.lines),
+      f"got {_mg.speaker.lines}")
+_mg2 = _lvl_coach(4, 2)
+_mg2._speak_lap_summary(105.0, [])
+check("mean girl: slow lap gets the treatment",
+      any(any(s in ln for s in (
+          "flying lap", "embarrassed", "a tour", "out lap called",
+          "rental kart")) for ln in _mg2.speaker.lines),
+      f"got {_mg2.speaker.lines}")
+
+_sup = _lvl_coach(-1, 1)   # talk 1 on purpose: supportive must survive it
+_sup._speak_lap_summary(99.0, [])
+check("supportive: PB praised even at talk 1",
+      any(any(s in ln for s in (
+          "beautiful lap", "work paying off", "earned every tenth",
+          "looked smooth")) for ln in _sup.speaker.lines),
+      f"got {_sup.speaker.lines}")
+_sup2 = _lvl_coach(-1, 1)
+_sup2._speak_lap_summary(105.0, [])
+check("supportive: slow lap reframed, not mocked",
+      any(any(s in ln for s in (
+          "pace is in you", "good ones are still coming",
+          "pace is there")) for ln in _sup2.speaker.lines),
+      f"got {_sup2.speaker.lines}")
+_sup3 = _lvl_coach(-1, 2)
+for _ in range(4):
+    _sup3._speak_lap_summary(99.0, [])
+_pb4 = set()
+for ln in _sup3.speaker.lines:
+    for cand in ("beautiful lap", "work paying off", "earned every tenth",
+                 "looked smooth"):
+        if cand in ln:
+            _pb4.add(cand)
+check("supportive: PB pool rotates without repeating",
+      len(_pb4) == 4, f"got {_pb4}")
+
+# Supportive gain callouts: the reference crawls through the zone,
+# the live lap doesn't -- at sass -1 that earns a line; at 0, silence.
+def _gain_coach(level):
+    c = m.Coach(dict(CFG, sass_level=level, talk_level=2),
+                FakeSpeaker(), lambda *a, **k: None)
+    pr = m.TrackProfile(f"gain{level}__car")
+    c.set_profile(pr)
+    pr.track_length_m = 5000.0
+    pr.corners = [{"num": 1, "name": "Turn 1", "zone_start": 1000,
+                   "zone_end": 1200, "brake_bin": 1010, "apex_bin": 1100,
+                   "throttle_bin": 1150, "apex_speed_kmh": 60.0,
+                   "has_brake_zone": True, "phases": None}]
+    rspd = [150.0] * m.NBINS
+    for j in range(1000, 1200):
+        rspd[j] = 60.0
+    pr.ref = {"spd": rspd, "brk": [0.0] * m.NBINS,
+              "gas": [1.0] * m.NBINS, "hdg": None, "str": None}
+    c.lap_number = 1
+    c.last_spoke_t = -1000.0
+    for i in range(1000):
+        c.bins.add(i / 1000.0, 150.0, 0.0, 1.0)
+    c._prev_bin = 1201
+    c._maybe_exit_feedback(1000.0, 1203 / m.NBINS)
+    return c
+
+_gc = _gain_coach(-1)
+check("supportive: a real gain earns a callout",
+      any(("gained" in ln or "in hand" in ln or "found there" in ln)
+          and "Turn 1" in ln for ln in _gc.speaker.lines),
+      f"got {_gc.speaker.lines}")
+_gc0 = _gain_coach(0)
+check("pro voice: gains stay silent at sass 0",
+      not any("gained" in ln or "in hand" in ln
+              for ln in _gc0.speaker.lines),
+      f"got {_gc0.speaker.lines}")
 
 # ---- bin interpolation rescues slow feeds (v2.16.3) ----
 _lb = m.LapBins()

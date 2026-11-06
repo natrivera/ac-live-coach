@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.18.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.19.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -242,7 +242,7 @@ DEFAULT_CONFIG = {
     "brake_tone_lead_m": 0,       # fire the tone this many metres before the brake point
     "brake_tone_late_m": 25,      # v2.13.0: a tone held by a busy channel may still fire up to this many metres past the point
     "position_fallback": True,    # v2.13.0: when a track reports no spline position, coach by distance (lap timer + odometer)
-    "sass_level": 3,              # v2.14.0: coach personality spectrum: 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharpest pools (default 3 since v2.14.1, Albert's call)
+    "sass_level": 3,              # v2.14.0 spectrum, extended v2.19.0: -1 = super helpful & supportive, 0 = pro, 1 = dry summaries, 2 = + repeat-offender/off-pace lines, 3 = sharp pools, 4 = mean girl (default 3 since v2.14.1, Albert's call)
     "talk_level": 1,              # v2.16.0: how much the coach talks: 2 = full, 1 = reduced (default), 0 = essentials only
 }
 
@@ -3767,9 +3767,20 @@ class Coach:
                 elif res["loss"] >= min_loss:
                     if (self._sass_eff() >= 2
                             and self._exit_line_count.get(num, 0) >= 1):
-                        line = self._sass_pick(f"exit_again_{num}", [
-                            f"{c['name']} again: lost {tenths_phrase(res['loss'])} there",
-                            f"{c['name']}: lost {tenths_phrase(res['loss'])} there. Again."])
+                        _t = tenths_phrase(res["loss"])
+                        if self._sass_eff() >= 4:
+                            line = self._sass_pick(f"exit_again_{num}", [
+                                f"{c['name']} again: lost {_t} there. It's a whole thing with you two.",
+                                f"{c['name']}: lost {_t} there. Again. Obviously.",
+                                f"{c['name']} again: lost {_t} there. Groundbreaking. Truly."])
+                        else:
+                            _pool = [
+                                f"{c['name']} again: lost {_t} there",
+                                f"{c['name']}: lost {_t} there. Again."]
+                            if self._sass_eff() >= 3:
+                                _pool.append(
+                                    f"{c['name']} again: lost {_t} there — a recurring feature.")
+                            line = self._sass_pick(f"exit_again_{num}", _pool)
                     else:
                         line = f"{c['name']}: lost {tenths_phrase(res['loss'])} there"
                     # v2.6.0: say WHY, not just how much -- the live
@@ -3785,6 +3796,19 @@ class Coach:
                             "guide_symptom_tips", True)))
                     if fix and ": " in fix:
                         fix_text = fix.split(": ", 1)[1]
+                elif (self._sass_eff() == -1
+                        and res["loss"] <= -(0.35 if minor else 0.20)):
+                    # v2.19.0: the supportive coach notices what
+                    # went RIGHT. A real gain against the reference
+                    # earns a callout from the same per-lap budget
+                    # the losses use -- encouragement, rationed
+                    # like everything else on this channel.
+                    _t = tenths_phrase(-res["loss"])
+                    line = self._sass_pick("exit_gain", [
+                        f"{c['name']}: gained {_t} there — that's the one.",
+                        f"{c['name']}: {_t} in hand there. Lovely.",
+                        f"{c['name']}: gained {_t}. Whatever you did there, keep it.",
+                        f"{c['name']}: {_t} found there. That's your corner now."])
                 elif res["loss"] >= (0.20 if minor else 0.10) and res["coast_s"] >= 2.0:
                     _ce = res.get("coast_entry_s") or 0.0
                     _cx = res.get("coast_exit_s") or 0.0
@@ -3881,19 +3905,26 @@ class Coach:
                     self._optimal["brk"][b] = brk[b]
                 self._optimal["zone_times"][r["num"]] = r["zone_time"]
 
-    # -- sass (v2.14.0) ---------------------------------------------------
-    # A spectrum, not a switch (Albert's call): sass_level 0 is the
-    # pro voice he has always had; 1 gives lap summaries a dry
-    # variant pool; 2 adds repeat-offender and well-off-pace lines
-    # plus 'again' forms on exit feedback; 3 sharpens the pools.
-    # Sass only ever wraps the facts -- numbers and fixes are
-    # untouched -- and it never enters approach cues, which stay
-    # pure function at every level. Pools rotate per site so a line
-    # cannot repeat until its pool is used up.
+    # -- sass (v2.14.0, extended v2.19.0) --------------------------------
+    # A spectrum, not a switch (Albert's call): -1 is a super
+    # helpful, supportive coach (warm summary framing, and it
+    # notices GAINS at corners, not just losses); 0 is the pro
+    # voice he has always had; 1 gives lap summaries a dry variant
+    # pool; 2 adds repeat-offender and well-off-pace lines plus
+    # 'again' forms on exit feedback; 3 sharpens the pools; 4 is
+    # mean girl -- catty, backhanded, aimed at the driving and
+    # never at the driver. Sass only ever wraps the facts --
+    # numbers and fixes are untouched -- and it never enters
+    # approach cues, which stay pure function at every level.
+    # Pools rotate per site so a line cannot repeat until its
+    # pool is used up, and each pool starts at a random offset
+    # per session so the first summary of the day isn't always
+    # the same line (Albert, Nov 5 2026: no stale, repetitive
+    # comments -- the pools grew at both ends accordingly).
 
     def _sass_level(self):
         try:
-            return int(self.cfg.get("sass_level", 0))
+            return max(-1, min(4, int(self.cfg.get("sass_level", 0))))
         except Exception:
             return 0
 
@@ -3911,14 +3942,29 @@ class Coach:
             return 1
 
     def _sass_eff(self):
-        """Sass speaks only at full talk level: when the talking is
-        stepped back, the colour is the first thing to go."""
-        return self._sass_level() if self._talk_level() >= 2 else 0
+        """Effective sass for this lap. Colour (levels 1+) speaks
+        only at full talk level: when the talking is stepped back,
+        the colour is the first thing to go. The supportive
+        register (-1) is the exception: it REFRAMES lines the
+        coach already speaks rather than adding new ones (plus
+        gain callouts that share the existing exit budget), so
+        it survives talk_level 1. Talk 0 silences everything."""
+        lvl = self._sass_level()
+        if self._talk_level() >= 2:
+            return lvl
+        if self._talk_level() == 1 and lvl == -1:
+            return -1
+        return 0
 
     def _sass_pick(self, site, pool):
         if not pool:
             return None
-        i = self._sass_rot.get(site, 0)
+        if site not in self._sass_rot:
+            # v2.19.0: random entry point per session -- sequential
+            # rotation alone replayed the same first lines every
+            # session, which reads as stale even in a big pool.
+            self._sass_rot[site] = random.randrange(len(pool))
+        i = self._sass_rot[site]
         self._sass_rot[site] = i + 1
         return pool[i % len(pool)]
 
@@ -3929,14 +3975,40 @@ class Coach:
         if p and p.best_lap_s and abs(lap_time - p.best_lap_s) > 0.05:
             if lap_time > p.best_lap_s:
                 d = lap_time - p.best_lap_s
-                if sass >= 2 and d >= 2.0:
+                if d >= 2.0 and sass == -1:
+                    parts.append(self._sass_pick("summary_slow", [
+                        f"{d:.1f} off your best — the pace is in you; that lap just had noise in it.",
+                        f"{d:.1f} off your best. One lap. The good ones are still coming.",
+                        f"{d:.1f} off your best — shake it off; your best today proves the pace is there."]))
+                elif d >= 2.0 and sass >= 4:
+                    parts.append(self._sass_pick("summary_slow", [
+                        f"{d:.1f} off your best. Bold of you to call that a flying lap.",
+                        f"{d:.1f} off your best. Somewhere, your reference lap is embarrassed.",
+                        f"{d:.1f} off your best. That wasn't a lap, that was a tour.",
+                        f"{d:.1f} off your best. The out lap called — it wants its pace back.",
+                        f"{d:.1f} off your best. I've seen faster laps in a rental kart. With the limiter on."]))
+                elif sass >= 2 and d >= 2.0:
                     parts.append(self._sass_pick("summary_slow", [
                         f"{d:.1f} off your best.",
-                        f"{d:.1f} off your best — some sightseeing in that one."]))
+                        f"{d:.1f} off your best — some sightseeing in that one.",
+                        f"{d:.1f} off your best — the long way round, apparently.",
+                        f"{d:.1f} off your best. A lap, technically."]))
                 else:
                     parts.append(f"{d:.1f} off your best.")
             else:
-                if sass >= 1:
+                if sass == -1:
+                    parts.append(self._sass_pick("summary_pb", [
+                        "That's a new best — beautiful lap.",
+                        "New best! That's the work paying off.",
+                        "New best. You earned every tenth of that.",
+                        "New best — and it looked smooth doing it."]))
+                elif sass >= 4:
+                    parts.append(self._sass_pick("summary_pb", [
+                        "New best. Even a broken clock, etcetera.",
+                        "New best. Don't worry, I'll find something.",
+                        "New best. The reference moved — try to keep up with yourself.",
+                        "New best. Cute. Now do it again."]))
+                elif sass >= 1:
                     pool = ["That's a new best.",
                             "New best. Frame it.",
                             "New best — the reference just moved."]
@@ -3966,25 +4038,54 @@ class Coach:
         if (leak_spoken and sass >= 2
                 and worst.get("num") is not None
                 and worst.get("num") == self._last_summary_leak):
-            pool = ["Same corner as last lap.",
-                    "It was that corner last lap, too."]
-            if sass >= 3:
-                pool.append("We're naming a grandstand after that corner at this rate.")
+            if sass >= 4:
+                pool = ["Same corner as last lap. It's giving... rent-free.",
+                        "That corner again. You two should just date already.",
+                        "Same leak, new lap. Consistency is a virtue. Elsewhere.",
+                        "We're naming a grandstand after that corner at this rate."]
+            else:
+                pool = ["Same corner as last lap.",
+                        "It was that corner last lap, too."]
+                if sass >= 3:
+                    pool.append("We're naming a grandstand after that corner at this rate.")
             parts.append(self._sass_pick("summary_repeat", pool))
         if leak_spoken:
             self._last_summary_leak = worst.get("num")
+        if leak_spoken and sass == -1:
+            parts.append(self._sass_pick("summary_leak_soft", [
+                "One corner at a time — that's the whole list.",
+                "Small fix. There's a big lap waiting behind it.",
+                "That's the only homework. Everything else held together."]))
         offs = [r for r in results if r.get("off")]
         if offs:
-            parts.append(f"Off track at {offs[0]['name']} — that one doesn't count.")
+            if sass == -1:
+                parts.append(self._sass_pick("summary_off", [
+                    f"Off track at {offs[0]['name']} — that one doesn't count. Shake it off.",
+                    f"Off track at {offs[0]['name']} — that one doesn't count; the rest of the lap still happened."]))
+            elif sass >= 4:
+                parts.append(self._sass_pick("summary_off", [
+                    f"Off track at {offs[0]['name']} — that one doesn't count. The desert says hi.",
+                    f"Off track at {offs[0]['name']} — the scenic route. Doesn't count."]))
+            else:
+                parts.append(f"Off track at {offs[0]['name']} — that one doesn't count.")
         reps = [r for r in results if r.get("repeat_off")]
         if reps:
             parts.append(f"{reps[0]['name']}: wide there every lap — "
                          f"that's a pattern, not a save, so it counts now.")
-        if not leak_spoken and not offs and sass >= 1:
-            pool = ["Nothing to fix.",
-                    "Clean lap — nothing to fix."]
-            if sass >= 2:
-                pool.append("Nothing to fix. Suspicious, but I'll allow it.")
+        if not leak_spoken and not offs and sass != 0:
+            if sass == -1:
+                pool = ["Nothing to fix. Clean, tidy, honest lap.",
+                        "Nothing to fix — consistent and smooth. Keep that.",
+                        "Clean lap. That's the standard now, and you set it."]
+            elif sass >= 4:
+                pool = ["Nothing to fix. I checked twice. Suspicious.",
+                        "Clean lap. Fine. Whatever. ...It was good.",
+                        "Nothing to fix. Who are you, and what did you do with my driver?"]
+            else:
+                pool = ["Nothing to fix.",
+                        "Clean lap — nothing to fix."]
+                if sass >= 2:
+                    pool.append("Nothing to fix. Suspicious, but I'll allow it.")
             parts.append(self._sass_pick("summary_clean", pool))
         self.speaker.say(" ".join(parts))
 
