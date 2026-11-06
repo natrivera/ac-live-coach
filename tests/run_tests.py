@@ -858,6 +858,28 @@ _bwcoach._apply_corner_names(_bwcs)
 check("bw names: layout profile keeps Turn N (no classic spans)",
       all(c["name"].startswith("Turn") for c in _bwcs))
 
+# Every guide shipped in the app's guides/ folder must parse (a broken
+# Big Willow file shipped in v2.17.0's first commit and was silently
+# skipped by the loader -- caught by the binding check, fixed same day),
+# and the layout guides must bind to representative layout profiles.
+import glob as _glob
+for _fn in sorted(_glob.glob(os.path.join(m.APP_DIR, "guides",
+                                          "*__guide.json"))):
+    try:
+        _gd = _json.load(open(_fn, encoding="utf-8"))
+        _ok = isinstance(_gd.get("zones"), dict) and len(_gd["zones"]) > 0
+    except Exception:
+        _ok = False
+    check(f"shipped guide parses: {os.path.basename(_fn)}", _ok)
+check("shipped guide binds: Big Willow by length",
+      (m._load_guide_for_profile(
+          _StubProfile("ddm_gts_willow_springs__car__layout4020"))
+       or {}).get("layout_length_m") == 4023)
+check("shipped guide binds: Circuit by length",
+      (m._load_guide_for_profile(
+          _StubProfile("nd_buttonwillow__car__layout4130"))
+       or {}).get("layout_length_m") == 4131)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")
