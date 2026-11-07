@@ -28,7 +28,8 @@
           "text": "Be back on the throttle before the apex, where the reflectors start on the left, and let the car run out to the right -- don't pinch the exit.",
           "trigger": "power"
         }
-      ]
+      ],
+      "tour": "Brake early, straight — throttle before the blind apex."
     },
     "2": {
       "character": "A long, high-speed right sweeper, 80-100 mph, usually driven as a double apex but better understood as one very late single apex. Enter from full left, but never go further left than mid-track in the first half -- the outside collects marbles and just makes the track longer. The speed throws you left around mid-corner; from there you steer the car with the THROTTLE, bringing it gradually right to the very late apex. Miss that apex and the car gets thrown all the way left on exit, where going off is scary. Advanced option in light cars: dive in early, let the car drift to scrub speed, and skip braking entirely -- worth a few tenths, not for every car or driver.",
@@ -42,7 +43,8 @@
           "text": "The apex here is later than it looks -- the entry half is positioning. If you apex early you'll be thrown left on exit with nowhere to go.",
           "trigger": "apex_early"
         }
-      ]
+      ],
+      "tour": "Very late apex — steer it with the throttle."
     },
     "3": {
       "character": "The hardest braking on the track, into a slow uphill left. Get ALL the braking and the downshift finished before turn-in -- there is very little to gain carrying speed in and a lot to lose turning in early, and trail braking does not pay here. Go deep into the right side of the entrance and turn in late; a small white mark on the right, well into the curve, shows where you want to be before turning. Camber changes at the exit make the car hard to settle, and the exit is where novices go off. Treat everything from this braking zone to the throttle point out of Turn 4 as one sacrifice: you're setting up the downhill, not making time uphill.",
@@ -57,7 +59,8 @@
           "text": "Turn in late: go deep to the right at the entrance, past the white mark. Early turn-in is where the time -- and the exit offs -- come from.",
           "trigger": "apex_early"
         }
-      ]
+      ],
+      "tour": "Hardest stop here — braking done before turn-in."
     },
     "4": {
       "character": "The top of the hill, paired with Turn 3 as a single sacrifice section. Exit 3 and drive straight up the hill -- the rumble strip you pass on the right is NOT an apex, and the track starts turning long before you do (Olsen aims students at the 'B' in the Budweiser wall lettering). Enter Turn 4 much further LEFT than instinct suggests, keeping the widest possible arc over the slowest point of the lap; two red cone marks on the left set it up -- parallel with the track edge at the first, turning right toward the late apex at the second. Lift, rotate at the top, point at the apex by the corner-worker station, then full throttle down the hill. The front-right tire can clip the dirt at the apex on a car that's lifting that wheel anyway. If you brake for 4 at all, it's the one corner that rewards braking very late.",
@@ -72,7 +75,8 @@
           "text": "Stay left and keep the arc wide -- enter Turn 4 much further left than feels natural, and don't chase the rumble strip on the right out of 3; it isn't an apex.",
           "trigger": "speed"
         }
-      ]
+      ],
+      "tour": "Sacrifice climb — rotate at the top, flat downhill."
     },
     "5": {
       "character": "A left with a downhill entrance and uphill exit, and the gateway to the fast half of the lap. From full left out of 4, bring the car back right and brake parallel with the candy-stripe rumble strip on the right. Brake and turn in EARLY -- the surface gets more slippery the deeper you go into the corner. No downshift: most cars hold one gear from the entrance of 3 all the way to the uphill of 6. The entire point of the corner is the earliest possible full throttle, because from here you are flat -- past 6, past 7, through 8 -- until the braking zone for 9. Olsen's own tip: brake even earlier than the downhill speed makes you want to; carrying speed in sets up a spectacular save, not a lap time. Exit as close to mid-track as you can.",
@@ -87,7 +91,8 @@
           "text": "Get to full throttle as early as you possibly can -- you're flat from this exit all the way to the braking zone for Turn 9.",
           "trigger": "power"
         }
-      ]
+      ],
+      "tour": "Brake early — grip fades deeper in. Flat from here."
     },
     "6": {
       "character": "The right-hander over the hill after 5. Turn in late and hug the right-side rumble strip to take the drama out of cresting the hill mid-corner. Don't upshift at the very top of the hill -- short-shift on the way up, or hold the shift until the car is settled and heading downhill toward 7.",
@@ -97,7 +102,8 @@
           "text": "Turn in late and hug the right rumble strip over the crest -- and don't grab the upshift at the very top; short-shift early or wait until the car settles downhill.",
           "trigger": "speed"
         }
-      ]
+      ],
+      "tour": "Late turn-in, hug the right rumble over the crest."
     },
     "7": {
       "character": "A kink Olsen tells students to ignore entirely -- the only thought here is carrying maximum speed toward Turn 8.",
@@ -107,7 +113,8 @@
           "text": "Don't coach yourself through this one -- it's a kink. Everything here is about arriving at Turn 8 as fast as possible.",
           "trigger": "speed"
         }
-      ]
+      ],
+      "tour": "Just a kink — carry max speed into Turn 8."
     },
     "8": {
       "character": "One of the fastest corners on any track anywhere. Most cars don't brake at all and many are flat on the gas -- in Olsen's telling, many cars should be flat from the exit of Turn 5 all the way through here. Dive toward the inside as early as you can and ride the inside edge: the washboard bumps are worst mid-track. The apex is very late (there's a red mark for it, but you won't be looking at the track at that speed). His reassurance: for all its speed, people very rarely go off here -- the corner holds more speed than your brain first accepts.",
@@ -121,7 +128,8 @@
           "text": "Get to the inside early and stay there -- the bumps live mid-track, and this corner holds far more speed than it feels like it should.",
           "trigger": "speed"
         }
-      ]
+      ],
+      "tour": "Flat through here — ride the inside, very late apex."
     },
     "9": {
       "character": "The famous one: a decreasing-radius right that scares drivers more the faster they get. The first half takes speed easily, the second half doesn't -- so a late turn-in is essential. Exit 8 around mid-track and brake moderately on the short straight once the car is settled. Then the landmarks do the work: spot the building near the track entrance on the horizon and begin a SLOW drift from mid-track toward the left edge; the white water tower is the key reference -- drive toward it and let your line to the tower choose your path and your turning point. Turn in around the middle of the three red cone marks on the left edge. There is almost always a cone at the apex and you do not want to miss it by much; done right, the car gets drawn down into a low spot at the apex -- feel that dip and the exit will take care of itself, at 80-100 mph past the cone, using as much of the left as you need.",
@@ -136,7 +144,8 @@
           "text": "Do the braking moderately on the short straight after 8, once the car is settled -- then let the tower line set the corner, and don't miss the apex cone.",
           "trigger": "brake"
         }
-      ]
+      ],
+      "tour": "Decreasing radius — late turn-in off the water tower."
     }
   }
 }

@@ -55,7 +55,8 @@
           "text": "Very late apex: release most of the brake but keep the front weighted, apex on the curbing, then throttle and let it run out -- and remember pit-entry traffic merges on your left here.",
           "trigger": "power"
         }
-      ]
+      ],
+      "tour": "Fastest approach — brake straight, very late apex."
     },
     "10": {
       "character": "A wide, fast left-hander -- 'the Swing' -- and a high-speed lift corner, not a braking corner. From far right, a brief lift of the throttle is all it takes to start the car rotating left; mid-to-late apex, very close to the curbs, then straight back to throttle and let it swing out to the right with your foot to the floor. One trap: at first your eyes will follow the pit-exit road on the left instead of the corner -- look for Turn 10 itself. Then drift back to the far left down the straight, because the Turn 1 braking point arrives fast.",
@@ -65,7 +66,8 @@
           "text": "No brake here -- a brief lift rotates it, then straight back to throttle at the mid-late apex, tight to the curbs. Get your eyes on Turn 10 itself, not the pit exit beside it.",
           "trigger": "lift"
         }
-      ]
+      ],
+      "tour": "No brake — brief lift rotates it, eyes on the corner."
     },
     "2": {
       "character": "Mid-speed left-hander, another late apex, running uphill then downhill -- and it sneaks up on you, because the run from Turn 1 is short. Get all the way back to the right after Turn 1. Almost no brake markers, so start conservative. Positive camber through here and into Turn 3 gives more grip than you expect: after the initial brake you should be accelerating through the apex. The exit matters beyond the corner itself -- 2 and 3 flow together, and a good exit is Turn 3's momentum. A slightly later turn-in than feels natural straightens the 2-to-3 run and pays on the exit.",
@@ -79,7 +81,8 @@
           "text": "Turning in early here strangles the exit into Turn 3. Stay patient, apex late, and be accelerating through it.",
           "trigger": "apex_early"
         }
-      ]
+      ],
+      "tour": "Sneaks up — later turn-in, exit is Turn 3's momentum."
     },
     "3": {
       "character": "Mid-speed right with a late apex, running slightly downhill. The PCA line stays TIGHT into it (some drivers go wider with a later apex): just before entry, a dab of brake -- less to slow the car than to load the front tires and rotate it. The exit falls away, and Garagistic flags possible lift-off oversteer in some cars, so from rotation onward it's maintenance throttle, adding gas gradually as the car settles, tracking out to the curbs on the left. (The two sources describe the camber differently -- helpful banking in the 2-3 complex per the PCA, an off-camber feel at this exit per Garagistic; the falling-away exit is the part both agree matters.)",
@@ -89,7 +92,8 @@
           "text": "The exit falls away downhill -- a mid-corner lift can bring the rear around. Dab the brake before entry to load the front and rotate, then maintenance throttle, feeding gas in gradually.",
           "trigger": "lift"
         }
-      ]
+      ],
+      "tour": "Dab the brake to rotate — maintenance throttle out."
     },
     "4": {
       "character": "A fast right-hander, a bit more than 90 degrees, slightly banked ('the Slingshot'). Stay left out of Turn 3 and look for a mid-to-late apex. How much slowing it needs is car-dependent: a light lift in a low-power car, a light brake in the GT4. The corner's whole value is its exit -- get the car turned in and planted so you can be back to throttle early and carry speed onto the long straight that follows. Enter a few feet off the edge, bring it down to the right curbing at the apex, and let it carry back out to the left.",
@@ -104,7 +108,8 @@
           "text": "Fast and slightly banked: many cars need only a light lift or a brush of brake here. Don't over-slow it.",
           "trigger": "lift"
         }
-      ]
+      ],
+      "tour": "Exit speed is everything — early throttle, long straight."
     },
     "5": {
       "character": "The Bank: a heavily banked right ('Chuckwalla-style', per Garagistic) with a very late turn-in and a very late apex. Off the straight from Turn 4, bring the car back to the right and brake -- how hard depends on the car: a genuine heavy brake in the GT4, down to a lift or light brake in a light car; the right-side marker cones are hard to see at speed, so find your own reference in the first laps. The banking and positive camber carry far more speed than first laps suggest -- the PCA author says he went too slow into it all day. Enter about a car width off the left edge, apex touching the left-side curb, then accelerate and track out to about mid-track (faster cars further right), and come back left of mid to set up Turn 6. The exit runs uphill.",
@@ -119,7 +124,8 @@
           "text": "Very late turn-in, very late apex: enter a car width off the left edge and don't drift to the curb early.",
           "trigger": "apex_early"
         }
-      ]
+      ],
+      "tour": "Banking carries more speed than it looks — late apex."
     },
     "6": {
       "character": "A big U-turn (a mid-speed hairpin) with concrete barriers on both sides -- Garagistic's 'Concrete Jungle' -- and some positive camber. It reads slower than it is. Standard late apex: enter about a car width off the right, come down to the right curb at the apex, and get back to throttle sooner than you think. Second or third gear depending on the car. The exit feeds a long downhill straight, so the throttle point pays twice.",
@@ -134,7 +140,8 @@
           "text": "Slowest-feeling corner on the track, concrete on both sides -- but it carries more speed than it looks. Don't park it.",
           "trigger": "brake"
         }
-      ]
+      ],
+      "tour": "Late apex — throttle sooner than it looks, downhill run."
     },
     "7": {
       "character": "Medium-speed left, slightly banked, leading to a short straight. Full throttle out of Turn 6 and up to the right edge, then a solid brake -- a corner worker on your left and brake markers on your right are the references. Apex just past mid-corner, all the way to the left-side curbing; there's a bump right at the apex, and feeling it is how you know you found it. Accelerate at the apex and let the car carry out to the right-edge curbing.",
@@ -144,7 +151,8 @@
           "text": "Solid brake, apex just past mid, all the way to the left curbing -- there's a bump at the apex; feeling it means you found it.",
           "trigger": "brake"
         }
-      ]
+      ],
+      "tour": "Solid brake — apex past mid, the bump means you found it."
     },
     "8": {
       "character": "The slowest and possibly hardest complex on the track, in two parts. 8A deceives: a fast, wide entry that makes 8B -- extremely tight -- arrive much sooner than expected. It is a textbook slow-in, fast-out: place the car for 8A (enter about a car width off the right curbing, apex a few feet off it), but all focus belongs to 8B. Balance entry speed against braking through 8A, let the car straighten briefly, then brake HARD and scrub the speed; sit left of mid-track for a moment, keep some brake pressure on to keep the front weighted, turn quickly and rotate, and dive to the right curbing for the 8B apex. Back to throttle there, and let it carry out to the left. Some cars need second gear for the exit; others carry third.",
@@ -159,7 +167,8 @@
           "text": "Slow in, fast out: keep some brake pressure to weight the front, rotate the car, apex on the right curbing at 8B, and get back to throttle.",
           "trigger": "power"
         }
-      ]
+      ],
+      "tour": "Slow in, fast out — all focus on 8B, brake hard, rotate."
     },
     "9": {
       "character": "A left-hander whose real job is setting up Turn 10 -- Garagistic calls it 'the Setup'. Enter from far left for a late apex; it has positive camber and carries more speed than you think. Brake before turn-in, bring the car all the way to the right curbing, and get quickly back to throttle. But sacrifice a little if you must: what matters is arriving at Turn 10 set up far enough right. Track out only to mid-track, then hustle back right. Note the pit exit sits on the left at this corner's exit.",
@@ -174,7 +183,8 @@
           "text": "Late apex with camber help: brake before turn-in, all the way to the right curbing, then quickly back to throttle -- out to mid-track only, then hustle back right for 10.",
           "trigger": "brake"
         }
-      ]
+      ],
+      "tour": "Sacrifice for Turn 10 — arrive set up far right."
     }
   }
 }

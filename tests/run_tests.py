@@ -1055,6 +1055,39 @@ check("tour line: no zone / no tips -> None",
       and m.guide_tour_line(GUIDE_T, 4) is None
       and m.guide_tour_line(None, 1) is None)
 
+# ---- v2.29.1: dedicated tour pacenotes + length cap ----
+GUIDE_T2 = {"track": "test", "zones": {
+    "1": {"name": "Turn 1", "priority": "exit",
+          "tour": "short pacenote wins",
+          "tips": [{"text": "power side one", "trigger": "power"}]},
+    "2": {"name": "Turn 2", "priority": "entry",
+          "tips": [{"text": " ".join(["word"] * 30),
+                    "trigger": "brake"}]}}}
+check("tour field beats the priority tip",
+      m.guide_tour_line(GUIDE_T2, 1) == "short pacenote wins")
+_capped = m.guide_tour_line(GUIDE_T2, 2)
+check("an over-long tour pick caps at a word boundary",
+      _capped is not None and len(_capped) <= 72
+      and not _capped.endswith("wor")
+      and _capped.split()[-1] == "word")
+import glob as _glob
+import json as _json
+for _gf in _glob.glob(os.path.join(os.path.dirname(m.__file__),
+                                   "guides", "*__guide.json")):
+    _g = _json.load(open(_gf))
+    for _num, _z in (_g.get("zones") or {}).items():
+        if "tour" in _z:
+            check(f"shipped tour line <= 72 chars "
+                  f"({os.path.basename(_gf)} zone {_num})",
+                  len(_z["tour"]) <= 72)
+for _gf, _n in (("ddm_gts_willow_springs__big__guide.json", 9),
+                ("nd_buttonwillow__circuit__guide.json", 10)):
+    _g = _json.load(open(os.path.join(
+        os.path.dirname(m.__file__), "guides", _gf)))
+    check(f"{_gf}: every zone carries a tour line",
+          len(_g["zones"]) == _n
+          and all("tour" in z for z in _g["zones"].values()))
+
 
 def tour_coach(key, **cfgkw):
     c, p = new_coach(key)

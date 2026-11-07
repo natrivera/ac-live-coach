@@ -194,6 +194,9 @@ against expectations — the regression net for coaching changes.
 
 ## Changelog
 
+### v2.29.1
+Short guided-lap tour lines for Big Willow and the Circuit (audit item 22, approved by Albert Nov 7). Both guides now carry a dedicated `tour` pacenote per zone -- 19 lines, 42-57 chars, inside Buttonwillow's band -- and `guide_tour_line()` prefers it over the priority tip. A 72-char cap inside the picker cuts any longer line at a word boundary as a backstop, so a guided lap can never talk through the next corner. Guides without a tour field (Buttonwillow, Laguna, Streets) behave exactly as before.
+
 ### v2.29.0
 Self-healing profiles and a snappy Stop, both from Albert's Nov 6 evening session. His stored Buttonwillow profile's corner anchors had drifted from its apex map through its chain of migrations: Sunrise and Sweeper Entry were billed the same near-whole-lap extended loss, Off Ramp's brake delta read +317 m, and Cotton Corners 1's brake anchor pointed a third of a lap away -- also what starved its guided-lap line twice. Anchor geometry is now validated against the apex map at profile load and rebuilt from the reference lap when it fails (names and apexes untouched; the repair is saved), and a degenerate extended-loss span falls back to zone loss instead of billing one corner the lap. Shutdown discards the voice queue instead of playing it out, and the panel log drains in bounded ticks with a length cap.
 

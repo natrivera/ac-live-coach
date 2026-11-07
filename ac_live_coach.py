@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.29.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.29.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2364,16 +2364,34 @@ def guide_tip_for(guide, num, kind, want=None):
     return None
 
 
+def _cap_tour_line(text, cap=72):
+    """v2.29.1 backstop: a tour line longer than the cap is cut
+    at the last complete word inside it, so the guided lap can
+    never talk through the next corner on a long guide tip."""
+    if not text or len(text) <= cap:
+        return text
+    cut = text[:cap]
+    if " " in cut:
+        cut = cut[:cut.rfind(" ")]
+    return cut.rstrip(" ,;—-")
+
+
 def guide_tour_line(guide, num):
     """The one line the guided lap (v2.18.0) speaks for a corner:
-    the tip that matches the zone's priority -- braking side for
-    entry corners, power side for exit corners -- else the first
-    plain tip, else the first tip. Pacenote-length by construction:
-    guide tips are authored short; the zone's character prose stays
-    in the report where it belongs."""
+    the zone's dedicated `tour` pacenote when the guide carries
+    one (v2.29.1: Big Willow and the Circuit, whose full tips run
+    110-210 chars -- ~14 s of speech), else the tip that matches
+    the zone's priority -- braking side for entry corners, power
+    side for exit corners -- else the first plain tip, else the
+    first tip. Whatever wins is length-capped: pacenote-length
+    by construction for the tour lines, by the cap for the rest.
+    The zone's character prose stays in the report."""
     z = guide_zone(guide, num)
     if not z:
         return None
+    tour = z.get("tour")
+    if isinstance(tour, str) and tour.strip():
+        return _cap_tour_line(tour.strip())
     tips = z.get("tips") or []
     if not tips:
         return None
@@ -2382,11 +2400,11 @@ def guide_tour_line(guide, num):
     if want:
         for tip in tips:
             if tip_trigger(tip) == want:
-                return tip_text(tip)
+                return _cap_tour_line(tip_text(tip))
     for tip in tips:
         if isinstance(tip, str):
-            return tip
-    return tip_text(tips[0])
+            return _cap_tour_line(tip)
+    return _cap_tour_line(tip_text(tips[0]))
 
 
 def _geometry_sane(corners, bin_m):
