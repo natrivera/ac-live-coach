@@ -525,15 +525,23 @@ class Panel:
             print("[panel] no session report found yet")
 
     def _drain_log(self):
+        # v2.29.0: bounded work per tick, and the log view is
+        # capped -- an unbounded Tk Text makes every insert
+        # slower as the session grows, and a shutdown burst
+        # could stall the window outright (Albert: Stop 'just
+        # kind of froze', Nov 6).
         lines = []
         try:
-            while True:
+            while len(lines) < 150:
                 lines.append(self.log_q.get_nowait())
         except queue.Empty:
             pass
         if lines:
             self.log_text.configure(state="normal")
             self.log_text.insert("end", "\n".join(lines) + "\n")
+            total = int(self.log_text.index("end-1c").split(".")[0])
+            if total > 1600:
+                self.log_text.delete("1.0", f"{total - 1200}.0")
             self.log_text.see("end")
             self.log_text.configure(state="disabled")
         self.root.after(120, self._drain_log)

@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.28.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.29.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -628,6 +628,7 @@ class Speaker:
         self.cfg = cfg
         self.log = log_fn
         self.q = queue.Queue(maxsize=48)  # v2.23.0: capped (was unbounded)
+        self._stopped = False   # v2.29.0: set by stop() at shutdown
         # v2.24.0: playback bookkeeping. A queued line can be
         # dropped (stale, purged, queue full) without ever being
         # heard; the coach used to mark cues as fired and spend
@@ -911,11 +912,29 @@ class Speaker:
                       "the Windows voice takes over for this session")
         self._speak_sapi(text)
 
+    def stop(self):
+        """v2.29.0: silence NOW. Everything queued is dropped
+        (a shutdown that plays out a 48-line backlog is why Stop
+        felt frozen), the current utterance is the last one, and
+        the worker thread exits on the sentinel."""
+        self._stopped = True
+        try:
+            while True:
+                self.q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            self.q.put_nowait(None)
+        except queue.Full:
+            pass
+
     def _run(self):
         while True:
             item = self.q.get()
             if item is None:
                 break
+            if self._stopped:
+                continue
             ts, text, clauses, _kind, tag = item
             if clauses and clauses[0] == "__tone__":
                 # A brake tone is only true at its moment: played
@@ -1789,6 +1808,14 @@ def analyze_lap(lap_spd, lap_brk, lap_gas, ref, corners, bin_m,
         for i, r in enumerate(results):
             z0 = starts[i]
             z1 = starts[(i + 1) % len(starts)]
+            steps = (z1 - z0) % NBINS
+            if steps == 0 or steps > NBINS - 20:
+                # Degenerate span (anchor corruption): never let
+                # one corner bill (nearly) the whole lap. The
+                # profile-level repair is the cure; this is the
+                # guard so a bad span can never speak.
+                r["loss_ext"] = r["loss"]
+                continue
             r["loss_ext"] = round(
                 _cyclic_span_time(lap_spd, z0, z1, bin_m)
                 - _cyclic_span_time(ref["spd"], z0, z1, bin_m), 3)
@@ -2362,6 +2389,62 @@ def guide_tour_line(guide, num):
     return tip_text(tips[0])
 
 
+def _geometry_sane(corners, bin_m):
+    """Corner anchors must agree with the apex map: zone starts
+    strictly increasing in apex order, every apex inside its own
+    zone, every brake point at or just before its zone. Albert's
+    Buttonwillow profile failed all three after its long chain
+    of migrations (Nov 6 session 223357): Sunrise and Sweeper
+    Entry carried the same extended-loss span, Off Ramp's brake
+    delta read +317 m, Cotton Corners 1's brake anchor pointed a
+    third of a lap away (which is also what starved its guided-
+    lap line -- the tour anchors on brake_bin)."""
+    if len(corners) < 2:
+        return True
+    cs = sorted(corners, key=lambda c: c["apex_bin"])
+    starts = [c["zone_start"] for c in cs]
+    if any(starts[i] >= starts[i + 1]
+           for i in range(len(starts) - 1)):
+        return False
+    slack = max(4, int(80 / bin_m))
+    for c in cs:
+        if not (c["zone_start"] <= c["apex_bin"] <= c["zone_end"]):
+            return False
+        bb = c.get("brake_bin")
+        if c.get("has_brake_zone") and bb is not None:
+            if not (c["zone_start"] - slack <= bb <= c["apex_bin"]):
+                return False
+    return True
+
+
+def _repair_geometry(profile):
+    """Rebuild every corner's anchors from its apex, using the
+    stored reference traces -- the same _zone_from_apex math
+    detection uses. Names, numbers and apexes (the parts Albert
+    verified by hand) are untouched; only the derived anchors
+    (zone_start/end, brake_bin, throttle_bin) are re-derived.
+    Returns False when there is no reference to rebuild from."""
+    ref = getattr(profile, "ref", None) or {}
+    spd, brk, gas = ref.get("spd"), ref.get("brk"), ref.get("gas")
+    if not spd or brk is None or gas is None:
+        return False
+    bin_m = profile.bin_m
+    fixed = []
+    for c in profile.corners:
+        apex = c["apex_bin"]
+        nc = dict(c)
+        nc.update(_zone_from_apex(apex, spd[apex], spd, brk, gas,
+                                  bin_m))
+        fixed.append(nc)
+    fixed.sort(key=lambda c: c["apex_bin"])
+    for i in range(len(fixed) - 1):
+        nxt = fixed[i + 1]["zone_start"]
+        if fixed[i]["zone_end"] >= nxt:
+            fixed[i]["zone_end"] = max(fixed[i]["apex_bin"], nxt - 1)
+    profile.corners = fixed
+    return True
+
+
 class Coach:
     """The coaching brain. Feed it samples; it speaks through the Speaker."""
 
@@ -2679,6 +2762,29 @@ class Coach:
 
     def set_profile(self, profile):
         self.profile = profile
+        # v2.29.0: self-healing geometry. A profile whose corner
+        # anchors disagree with its apex map (migration damage)
+        # gets its anchors rebuilt from the reference lap, once,
+        # and the repair is saved so it does not recur.
+        try:
+            if (getattr(profile, "ref", None)
+                    and not _geometry_sane(profile.corners,
+                                           profile.bin_m)
+                    and _repair_geometry(profile)):
+                print("[profile] corner anchors were inconsistent "
+                      "with the apex map -- rebuilt from the "
+                      "reference lap (names and apexes unchanged)")
+                try:
+                    self.log("profile_repaired",
+                             {"key": profile.key})
+                except Exception:
+                    pass
+                try:
+                    profile.save()
+                except Exception:
+                    pass
+        except Exception:
+            pass
         # v2.23.0: a combo switch invalidates any in-flight lap
         # pairing -- officials settled under the old combo must
         # never pair with this one's finishes.
@@ -5864,6 +5970,10 @@ def run_live(cfg, stop_event=None, status=None):
     except KeyboardInterrupt:
         print("\nStopping coach...")
     finally:
+        try:
+            speaker.stop()
+        except Exception:
+            pass
         try:
             coach.flush()
         except Exception:

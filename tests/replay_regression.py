@@ -45,11 +45,16 @@ PINS = [
         "file": "session_20261106_081127.jsonl",
         "note": "Buttonwillow MX-5 (Nov 6 morning): out lap, the "
                 "2:03.2 clean reference, then the 2:05.4 lap with "
-                "the Sweeper Exit off. Summary leak verified by "
-                "hand against the session report.",
+                "the Sweeper Exit off. (Through v2.28 the replay's "
+                "leak line read 'cotton corners 1' because Cotton's "
+                "fresh-detection span was degenerate -- z1 == z0 "
+                "billed it the whole lap. The v2.29.0 span guard "
+                "fixed the accounting; phil hill entry is the "
+                "honest leak. Albert's own session report, on his "
+                "real profile, did name Cotton Corners 1.)",
         "laps": 2,
         "best_s": 123.2,
-        "contains": ["Biggest leak: cotton corners 1"],
+        "contains": ["Biggest leak: phil hill entry"],
     },
     {
         "file": "session_20261104_180305.jsonl",

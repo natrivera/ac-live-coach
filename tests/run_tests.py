@@ -1573,6 +1573,51 @@ _seg = m.build_report_html(_ap)
 _seg = _seg[_seg.find("Corner data"):_seg.find("Session summary")]
 check("report average loss is the extended loss",
       "+0.50s" in _seg)
+
+# ---- v2.29.0: geometry self-heal, span guard, speaker stop ----
+_gp = m.TrackProfile("testGEO__car")
+_gspd = [150.0] * m.NBINS
+_gbrk = [0.0] * m.NBINS
+_ggas = [1.0] * m.NBINS
+for _j in range(250, 291):
+    _gbrk[_j] = 1.0
+    _ggas[_j] = 0.0
+for _j in range(850, 891):
+    _gbrk[_j] = 1.0
+    _ggas[_j] = 0.0
+_gspd[300] = 60.0
+_gspd[900] = 70.0
+_gp.ref = {"spd": _gspd, "brk": _gbrk, "gas": _ggas}
+_gp.track_length_m = 4400.0
+_gp.corners = [
+    {"num": 1, "name": "Alpha", "apex_bin": 300, "zone_start": 100,
+     "zone_end": 400, "brake_bin": 280, "throttle_bin": 380,
+     "apex_speed_kmh": 60.0, "has_brake_zone": True, "minor": False},
+    {"num": 2, "name": "Beta", "apex_bin": 900, "zone_start": 100,
+     "zone_end": 1000, "brake_bin": 280, "throttle_bin": 950,
+     "apex_speed_kmh": 70.0, "has_brake_zone": True, "minor": False}]
+_gc, _gx = new_coach("testGEO2__car")
+_gc.set_profile(_gp)
+check("scrambled corner anchors are rebuilt from the apexes",
+      _gp.corners[1]["zone_start"] > _gp.corners[0]["zone_start"]
+      and _gp.corners[1]["brake_bin"] > 800
+      and _gp.corners[0]["name"] == "Alpha")
+_cs2 = [dict(_cs[0]), dict(_cs[1])]
+_cs2[1]["zone_start"] = 900     # same start as corner One: dead span
+_rows2 = m.analyze_lap(_spd_lap, [0.0] * m.NBINS, [1.0] * m.NBINS,
+                       {"spd": _spd_ref, "brk": [0.0] * m.NBINS,
+                        "gas": [1.0] * m.NBINS}, _cs2, 2.2)
+check("a degenerate extended-loss span falls back to zone loss",
+      _rows2[0]["loss_ext"] == _rows2[0]["loss"])
+import queue as _queue_mod
+_spk = object.__new__(m.Speaker)
+_spk.q = _queue_mod.Queue(maxsize=48)
+_spk._stopped = False
+_spk.q.put((0, "x", None, "info", None))
+_spk.q.put((0, "y", None, "info", None))
+_spk.stop()
+check("speaker stop drops the backlog, leaves only the sentinel",
+      _spk._stopped and _spk.q.qsize() == 1)
 m.APP_DIR, m.TRACKS_DIR = _old_app, _old_tracks
 _stop = threading.Event()
 _stat = {}
