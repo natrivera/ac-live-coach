@@ -194,6 +194,9 @@ against expectations — the regression net for coaching changes.
 
 ## Changelog
 
+### v2.29.0
+Self-healing profiles and a snappy Stop, both from Albert's Nov 6 evening session. His stored Buttonwillow profile's corner anchors had drifted from its apex map through its chain of migrations: Sunrise and Sweeper Entry were billed the same near-whole-lap extended loss, Off Ramp's brake delta read +317 m, and Cotton Corners 1's brake anchor pointed a third of a lap away -- also what starved its guided-lap line twice. Anchor geometry is now validated against the apex map at profile load and rebuilt from the reference lap when it fails (names and apexes untouched; the repair is saved), and a degenerate extended-loss span falls back to zone loss instead of billing one corner the lap. Shutdown discards the voice queue instead of playing it out, and the panel log drains in bounded ticks with a length cap.
+
 ### v2.28.0
 - **One loss number everywhere** (external review items 1–2): the extended loss — each corner charged through to the next braking zone — now drives cue ranking and averages, exit-feedback amounts, the debrief totals, the session summary lines, and the report's average-loss column (whose per-corner values now sum to roughly the lap delta, as they should). Two things deliberately stay on zone loss: single-lap qualification triggers (they detect a mistake *in* the corner) and the symptom cost model (it prices pedals, not spans).
 - **Explained-share honesty**: before the coach names a cause — in an exit line or the lap summary — the winning symptom must explain at least 40% of the corner's zone loss. Below that it says where the time went instead: "the loss is on the exit — cause unclear from the pedals." No more confident wrong causes. (Brake-only mode and the phase path, where one phase holds 60%+ of the loss, are honest by construction and pass unaudited.)
