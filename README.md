@@ -194,6 +194,9 @@ against expectations — the regression net for coaching changes.
 
 ## Changelog
 
+### v2.30.0
+Report map, widened, with braking as a second dimension (Albert's ask, Nov 9). The pale reference ribbon goes from 12 to 26 units wide and the session best lap's speed band from 4.6 to 10 (dark underlay 14), so the outline reads as a track rather than a line; the S/F checkers and corner-badge offsets scale to match. On top of the speed colors, the best lap now carries a **brake-pressure core**: a red center line whose width follows the lap's peak brake pressure per bin (haloed dark so it reads against every speed color), absent where the brake is under 8%. A light-to-full sample strip under the map keys the width. Speed stays the color; braking is the core's thickness.
+
 ### v2.29.1
 Short guided-lap tour lines for Big Willow and the Circuit (audit item 22, approved by Albert Nov 7). Both guides now carry a dedicated `tour` pacenote per zone -- 19 lines, 42-57 chars, inside Buttonwillow's band -- and `guide_tour_line()` prefers it over the priority tip. A 72-char cap inside the picker cuts any longer line at a word boundary as a backstop, so a guided lap can never talk through the next corner. Guides without a tour field (Buttonwillow, Laguna, Streets) behave exactly as before.
 
@@ -235,7 +238,7 @@ Self-healing profiles and a snappy Stop, both from Albert's Nov 6 evening sessio
 - History bookkeeping: Buttonwillow lap losses banked under the old "Riverside" zone name merge into "Bus Stop" on load, so the cross-session history line names the current map.
 
 ### v2.21.0
-- The report map is the heatmap Albert prototyped: the session best lap's driven line is coloured by speed over the pale reference ribbon, corner badges sit off the line with leader lines, and a checkered strip marks start/finish, with an mph legend.
+- The report map is the heatmap Albert prototyped: the session best lap's driven line is coloured by speed over the pale reference ribbon, corner badges sit off the line with leader lines, and a checkered strip marks start/finish, with an mph legend. Since v2.30.0 the ribbon and band are roughly twice as wide, and the best lap's line carries a red core whose width encodes brake pressure, with a light-to-full key under the map.
 
 ### v2.20.0
 - The corrected Buttonwillow map is baked in: Bus Stop is a real zone, the Sweeper is split across Sweeper Entry and Sweeper Exit, and Riverside and the Esses — no braking zone in either — are report notes, not zones. The 13CW guide is reworked to match.

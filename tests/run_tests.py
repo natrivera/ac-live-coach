@@ -1667,6 +1667,29 @@ check("run_live stops on the panel's stop event and reports state",
       not _th.is_alive() and _stat.get("running") is False
       and "coach" in _stat)
 
+# ---- v2.30.0: report map -- wider outline + brake-pressure core ----
+_mc, _mp = new_coach("testMAP__car")
+_mc._finalize_lap(make_rec(), 100.0, "test")
+_circ = [[1000.0 * _math.cos(2 * _math.pi * k / 120),
+          1000.0 * _math.sin(2 * _math.pi * k / 120)] for k in range(120)]
+_mp.outline = _circ
+_mspd = [200.0] * m.NBINS
+_mbrk = [0.0] * m.NBINS
+for _j in range(940, 1000):
+    _mbrk[_j] = 0.9
+_mc._session_best = {"time": 100.0, "spd": _mspd, "brk": _mbrk}
+_mc._lap_paths = {100.0: _circ}
+_mhtml = m.build_report_html(_mc)
+check("report map: reference ribbon drawn at the wider width",
+      'stroke="#b9c9dd" stroke-width="26"' in _mhtml)
+check("report map: brake-pressure core drawn from the best lap's brake bins",
+      "#ff2e1f" in _mhtml and "brake pressure on the best" in _mhtml)
+_mc._session_best = {"time": 100.0, "spd": [200.0] * m.NBINS,
+                     "brk": [0.0] * m.NBINS}
+_mhtml2 = m.build_report_html(_mc)
+check("report map: no brake core when the best lap never braked",
+      "#ff2e1f" not in _mhtml2)
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

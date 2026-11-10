@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.29.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.30.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -5370,8 +5370,11 @@ def build_report_html(coach):
         # colored by speed; corner badges move off the line on leader
         # lines; S/F is a checkered strip. (Albert's heatmap
         # prototype, Nov 5.)
-        parts.append(f'<polygon points="{pts_attr}" fill="rgba(30,100,200,0.05)" '
-                     f'stroke="#b9c9dd" stroke-width="12" stroke-linejoin="round"/>')
+        # v2.30.0: ribbon and best-lap band roughly doubled in width
+        # (Albert: the outline read as a line, not a track), and the
+        # best lap gains a brake-pressure core (below).
+        parts.append(f'<polygon points="{pts_attr}" fill="rgba(30,100,200,0.07)" '
+                     f'stroke="#b9c9dd" stroke-width="26" stroke-linejoin="round"/>')
         parts.append(f'<polyline points="{pts_attr}" fill="none" '
                      f'stroke="#20508f" stroke-width="1.2" opacity="0.55" '
                      f'stroke-linejoin="round"/>')
@@ -5419,7 +5422,7 @@ def build_report_html(coach):
                 vmax = vmin + 5.0
             under = " ".join(f"{q[0]:.0f},{q[1]:.0f}" for q in bxy)
             parts.append(f'<polyline points="{under}" fill="none" stroke="#222" '
-                         f'stroke-width="6.4" stroke-linejoin="round" '
+                         f'stroke-width="14" stroke-linejoin="round" '
                          f'stroke-linecap="round"/>')
             buckets = {}
             for a, b, s in zip(bxy, bxy[1:], spd):
@@ -5429,15 +5432,43 @@ def build_report_html(coach):
             for bk in sorted(buckets):
                 d_attr = " ".join(buckets[bk])
                 parts.append(f'<path d="{d_attr}" fill="none" '
-                             f'stroke="{turbo(bk / 23.0)}" stroke-width="4.6" '
+                             f'stroke="{turbo(bk / 23.0)}" stroke-width="10" '
                              f'stroke-linecap="round"/>')
+            # v2.30.0: braking as a second dimension on the same
+            # line -- a red core whose width follows the best lap's
+            # peak brake pressure per bin, over a thin dark halo so
+            # it reads against every speed color. Bins under 8%
+            # brake are trail/noise and stay coreless.
+            brake_drawn = False
+            brk = sb.get("brk")
+            if brk and len(brk) >= NBINS:
+                bvals = [brk[min(NBINS - 1, int((f / tot) * NBINS))]
+                         for f in fr]
+                bbuckets = {}
+                for a, b, bv in zip(bxy, bxy[1:], bvals):
+                    if bv < 0.08:
+                        continue
+                    bk2 = min(7, int(bv * 8))
+                    bbuckets.setdefault(bk2, []).append(
+                        f"M{a[0]:.0f},{a[1]:.0f} L{b[0]:.0f},{b[1]:.0f}")
+                for bk2 in sorted(bbuckets):
+                    wd = 1.6 + (bk2 + 0.5) / 8.0 * 5.6
+                    d_attr = " ".join(bbuckets[bk2])
+                    parts.append(
+                        f'<path d="{d_attr}" fill="none" stroke="#14100e" '
+                        f'stroke-width="{wd + 1.8:.1f}" '
+                        f'stroke-linecap="round" opacity="0.45"/>')
+                    parts.append(
+                        f'<path d="{d_attr}" fill="none" stroke="#ff2e1f" '
+                        f'stroke-width="{wd:.1f}" stroke-linecap="round"/>')
+                    brake_drawn = True
         # checkered S/F strip across the line at the outline start
         sx, sy = oxy[0]
         tx, ty = oxy[3][0] - sx, oxy[3][1] - sy
         tl = math.hypot(tx, ty) or 1.0
         tx, ty = tx / tl, ty / tl
         nx, ny = -ty, tx
-        sq = 6.5
+        sq = 8.0
         for ri in range(2):
             for ci in range(4):
                 a0 = -2 * sq + ci * sq
@@ -5465,7 +5496,7 @@ def build_report_html(coach):
             col = loss_color(avg)
             dx, dy = mx - cenx, my - ceny
             dl = math.hypot(dx, dy) or 1.0
-            bx, by = mx + dx / dl * 30, my + dy / dl * 30
+            bx, by = mx + dx / dl * 40, my + dy / dl * 40
             parts.append(
                 f'<line x1="{mx:.0f}" y1="{my:.0f}" x2="{bx:.0f}" '
                 f'y2="{by:.0f}" stroke="#444" stroke-width="1"/>'
@@ -5491,6 +5522,25 @@ def build_report_html(coach):
                 '<div style="text-align:center;font-size:12px;'
                 f'color:#555">speed on the session best lap ({bt_s}) — '
                 'its driven line over the reference line</div>')
+            if brake_drawn:
+                parts.append(
+                    '<div style="display:flex;align-items:center;gap:8px;'
+                    'max-width:520px;margin:4px auto 0;font-size:12px">'
+                    '<span>light</span>'
+                    '<svg width="150" height="12" style="flex:none">'
+                    '<rect x="0" y="1" width="150" height="10" '
+                    'fill="#3a6ea8"/>'
+                    '<line x1="2" y1="6" x2="48" y2="6" stroke="#ff2e1f" '
+                    'stroke-width="1.9" stroke-linecap="round"/>'
+                    '<line x1="52" y1="6" x2="98" y2="6" stroke="#ff2e1f" '
+                    'stroke-width="4.4" stroke-linecap="round"/>'
+                    '<line x1="102" y1="6" x2="148" y2="6" stroke="#ff2e1f" '
+                    'stroke-width="7.0" stroke-linecap="round"/></svg>'
+                    '<span>full</span></div>'
+                    '<div style="text-align:center;font-size:12px;'
+                    'color:#555">red core = brake pressure on the best '
+                    'lap — the thicker the core, the harder the braking'
+                    '</div>')
         map_svg = "\n".join(parts)
     else:
         map_svg = "<p><i>No driven-line map captured this session.</i></p>"
