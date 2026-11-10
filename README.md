@@ -194,6 +194,9 @@ against expectations — the regression net for coaching changes.
 
 ## Changelog
 
+### v2.30.1
+Two fixes from Albert's Nov 9 evening sessions. **The geometry repair looped**: the sanity check demanded strictly increasing zone starts, but Cotton Corners 1/2 and Sweeper Entry/Exit each share one braking event, so the repair's own output -- both corners of a pair carrying the same brake point and zone start -- failed the check and the repair re-fired on every load. Equal starts are now accepted when the pair genuinely shares a brake_bin; backwards starts, mismatched anchors and far-away brake points still fail and still repair. **The panel's Open latest report could open an empty file**: the report writer opened the file before building it (a build failure left a zero-byte husk), the engine's status kept pointing at the pre-rotation starter session's never-written report, and the panel picked the newest file by mtime, husks included. The writer now builds first and writes on success, rotation updates the status path, and the panel skips zero-byte reports, falling back to the newest non-empty one.
+
 ### v2.30.0
 Report map, widened, with braking as a second dimension (Albert's ask, Nov 9). The pale reference ribbon goes from 12 to 26 units wide and the session best lap's speed band from 4.6 to 10 (dark underlay 14), so the outline reads as a track rather than a line; the S/F checkers and corner-badge offsets scale to match. On top of the speed colors, the best lap now carries a **brake-pressure core**: a red center line whose width follows the lap's peak brake pressure per bin (haloed dark so it reads against every speed color), absent where the brake is under 8%. A light-to-full sample strip under the map keys the width. Speed stays the color; braking is the core's thickness.
 

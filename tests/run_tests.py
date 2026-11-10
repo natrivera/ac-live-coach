@@ -1690,6 +1690,70 @@ _mhtml2 = m.build_report_html(_mc)
 check("report map: no brake core when the best lap never braked",
       "#ff2e1f" not in _mhtml2)
 
+# ---- v2.30.1: geometry check accepts shared-brake pairs ----
+_bin_m2 = 4405.0 / m.NBINS
+_gs2 = [180.0] * m.NBINS
+_gb2 = [0.0] * m.NBINS
+_gg2 = [1.0] * m.NBINS
+
+
+def _plant2(frac, arr, val, half=20):
+    c = int(frac * m.NBINS)
+    for _j in range(c - half, c + half):
+        arr[_j] = val
+
+
+_plant2(0.238, _gb2, 0.9)
+_plant2(0.238, _gg2, 0.0)
+_plant2(0.715, _gb2, 0.9)
+_plant2(0.715, _gg2, 0.0)
+_pairs = []
+for _fr in (0.254, 0.272, 0.733, 0.760):
+    _apx = int(_fr * m.NBINS)
+    _zc = m._zone_from_apex(_apx, 70.0, _gs2, _gb2, _gg2, _bin_m2)
+    _zc["num"] = len(_pairs) + 1
+    _pairs.append(_zc)
+check("geometry: paired zones sharing one brake event are sane",
+      _pairs[0]["zone_start"] == _pairs[1]["zone_start"]
+      and m._geometry_sane(_pairs, _bin_m2,
+                           {"spd": _gs2, "brk": _gb2, "gas": _gg2}))
+_scr = [dict(c) for c in _pairs]
+_scr[0]["brake_bin"] = _scr[0]["apex_bin"] - 600
+check("geometry: a brake anchor far from its zone is still corrupt",
+      not m._geometry_sane(_scr, _bin_m2))
+_scr2 = [dict(c) for c in _pairs]
+_scr2[1]["zone_start"] = _scr2[0]["zone_start"] - 50
+check("geometry: zone starts running backwards are still corrupt",
+      not m._geometry_sane(_scr2, _bin_m2))
+_scr3 = [dict(c) for c in _pairs]
+_scr3[1]["brake_bin"] = _scr3[1]["brake_bin"] + 30
+check("geometry: equal starts with different brake anchors are corrupt",
+      not m._geometry_sane(_scr3, _bin_m2))
+
+# ---- v2.30.1: panel report picking skips empty/stale reports ----
+_tmpd2 = tempfile.mkdtemp()
+os.makedirs(os.path.join(_tmpd2, "logs"), exist_ok=True)
+_old_app2 = m.APP_DIR
+m.APP_DIR = _tmpd2
+_good = os.path.join(_tmpd2, "logs", "report_20260101_100000.html")
+_husk = os.path.join(_tmpd2, "logs", "report_20260101_110000.html")
+with open(_good, "w") as _f:
+    _f.write("<html>good</html>")
+with open(_husk, "w") as _f:
+    _f.write("")
+os.utime(_good, (1000000, 1000000))
+os.utime(_husk, (2000000, 2000000))
+check("panel latest_report skips zero-byte reports",
+      panel.latest_report() == _good)
+check("panel pick_report falls back from a stale status path",
+      panel.pick_report({"report_path": os.path.join(
+          _tmpd2, "logs", "report_20260101_090000.html")}) == _good)
+check("panel pick_report prefers the live session's real report",
+      panel.pick_report({"report_path": _good}) == _good)
+check("panel pick_report skips a zero-byte status path",
+      panel.pick_report({"report_path": _husk}) == _good)
+m.APP_DIR = _old_app2
+
 print()
 if FAILS:
     print(f"{len(FAILS)} FAILURE(S): {', '.join(FAILS)}")

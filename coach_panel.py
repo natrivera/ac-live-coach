@@ -230,11 +230,34 @@ def profile_corners(key):
     return []
 
 
+def _report_ok(p):
+    try:
+        return bool(p) and os.path.getsize(p) > 0
+    except OSError:
+        return False
+
+
 def latest_report():
-    cands = glob.glob(os.path.join(m.APP_DIR, "logs", "report_*.html"))
+    # v2.30.1: zero-byte reports are failed writes / aborted
+    # starts, never the report anyone wants to open -- skip them.
+    cands = [p for p in glob.glob(os.path.join(m.APP_DIR, "logs",
+                                               "report_*.html"))
+             if _report_ok(p)]
     if not cands:
         return None
     return max(cands, key=os.path.getmtime)
+
+
+def pick_report(status):
+    """The report the Open button should open: the running
+    session's own report when it exists and has content, else the
+    newest non-empty report on disk. (v2.30.1: the status path can
+    name a session whose report was never written, and the newest
+    file on disk can be an empty husk -- Albert, Nov 9.)"""
+    p = (status or {}).get("report_path")
+    if _report_ok(p):
+        return p
+    return latest_report()
 
 
 # ------------------------------------------------------------------
@@ -518,8 +541,8 @@ class Panel:
 
     # ---- housekeeping -------------------------------------------
     def _open_report(self):
-        p = self.status.get("report_path") or latest_report()
-        if p and os.path.exists(p):
+        p = pick_report(self.status)
+        if p:
             webbrowser.open("file:///" + p.replace(os.sep, "/"))
         else:
             print("[panel] no session report found yet")

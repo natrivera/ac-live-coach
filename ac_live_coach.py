@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.30.0"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.30.1"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -2407,7 +2407,7 @@ def guide_tour_line(guide, num):
     return _cap_tour_line(tip_text(tips[0]))
 
 
-def _geometry_sane(corners, bin_m):
+def _geometry_sane(corners, bin_m, ref=None):
     """Corner anchors must agree with the apex map: zone starts
     strictly increasing in apex order, every apex inside its own
     zone, every brake point at or just before its zone. Albert's
@@ -2421,9 +2421,39 @@ def _geometry_sane(corners, bin_m):
         return True
     cs = sorted(corners, key=lambda c: c["apex_bin"])
     starts = [c["zone_start"] for c in cs]
-    if any(starts[i] >= starts[i + 1]
+    if any(starts[i] > starts[i + 1]
            for i in range(len(starts) - 1)):
         return False
+    # v2.30.1: equal starts are legitimate for a pair of zones
+    # sharing ONE braking event -- Cotton Corners 1/2 and Sweeper
+    # Entry/Exit are single brake zones feeding two apexes, and
+    # _zone_from_apex hands both corners the same brake_bin and
+    # zone_start. A strict-increase rule condemned exactly the
+    # profiles the repair produces, so the repair re-fired on
+    # every load (Albert's Buttonwillow MX-5 profile, Nov 9).
+    # Sharing alone is not proof, though: the Nov 6 corruption
+    # also shared brake anchors across unrelated corners. A pair
+    # is genuine only if re-deriving the later corner's anchors
+    # from the reference lands on the same brake point -- i.e.
+    # it has no braking event of its own it should anchor to.
+    for i in range(len(cs) - 1):
+        if starts[i] == starts[i + 1]:
+            bb = cs[i].get("brake_bin")
+            if bb is None or bb != cs[i + 1].get("brake_bin"):
+                return False
+            if not (ref and ref.get("spd") and ref.get("brk") is not None):
+                return False
+            try:
+                want = _zone_from_apex(
+                    cs[i + 1]["apex_bin"],
+                    ref["spd"][cs[i + 1]["apex_bin"]],
+                    ref["spd"], ref["brk"],
+                    ref.get("gas") or [0.0] * len(ref["spd"]),
+                    bin_m)["brake_bin"]
+            except Exception:
+                return False
+            if want != bb:
+                return False
     slack = max(4, int(80 / bin_m))
     for c in cs:
         if not (c["zone_start"] <= c["apex_bin"] <= c["zone_end"]):
@@ -2787,7 +2817,8 @@ class Coach:
         try:
             if (getattr(profile, "ref", None)
                     and not _geometry_sane(profile.corners,
-                                           profile.bin_m)
+                                           profile.bin_m,
+                                           getattr(profile, "ref", None))
                     and _repair_geometry(profile)):
                 print("[profile] corner anchors were inconsistent "
                       "with the apex map -- rebuilt from the "
@@ -5797,8 +5828,13 @@ def run_live(cfg, stop_event=None, status=None):
         # popup can no longer depend on exit at all. The page carries
         # a 20 s auto-refresh, so the early-opened tab stays current.
         try:
+            # v2.30.1: build BEFORE opening the file -- opening with
+            # "w" first meant a build failure left a zero-byte husk
+            # behind, and the newest husk is what the panel's
+            # latest-report button then opened (Albert, Nov 9).
+            html = build_report_html(coach)
             with open(report_path, "w", encoding="utf-8") as rf:
-                rf.write(build_report_html(coach))
+                rf.write(html)
             if report_state["laps"] < 0:
                 print(f"[report] session report started: {report_path}")
             report_state["laps"] = len(coach.lap_records)
@@ -5913,6 +5949,12 @@ def run_live(cfg, stop_event=None, status=None):
                                 os.path.basename(txt_path).replace(
                                     "debrief_", "report_").replace(
                                         ".txt", ".html"))
+                            # v2.30.1: the panel's report button
+                            # reads status["report_path"] -- keep it
+                            # pointing at THIS session's report, not
+                            # the pre-rotation starter session's.
+                            if status is not None:
+                                status["report_path"] = report_path
                             report_state = {"laps": -1, "opened": False}
                             print(f"Session log: {jsonl_path}")
                             print(f"Debrief:     {txt_path}")
