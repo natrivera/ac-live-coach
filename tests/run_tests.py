@@ -1603,7 +1603,7 @@ _ap._finalize_lap(make_rec(), 100.0, "test")
 _ap.corner_history = {1: [dict(BASE, loss=0.10, loss_ext=0.50,
                                off=False)]}
 _seg = m.build_report_html(_ap)
-_seg = _seg[_seg.find("Corner data"):_seg.find("Session summary")]
+_seg = _seg[_seg.find("Corner data"):_seg.find("Speed &amp; brake")]
 check("report average loss is the extended loss",
       "+0.50s" in _seg)
 
@@ -1689,6 +1689,12 @@ _mc._session_best = {"time": 100.0, "spd": [200.0] * m.NBINS,
 _mhtml2 = m.build_report_html(_mc)
 check("report map: no brake core when the best lap never braked",
       "#ff2e1f" not in _mhtml2)
+
+# ---- v2.31.0: one-page report ----
+check("one-page report: grid page, no guide section, no prose summary",
+      'class="page"' in _mhtml and "<h2>Track guide</h2>" not in _mhtml
+      and "<h2>Session summary</h2>" not in _mhtml
+      and "Corner data" in _mhtml and "Key coaching points" in _mhtml)
 
 # ---- v2.30.1: geometry check accepts shared-brake pairs ----
 _bin_m2 = 4405.0 / m.NBINS

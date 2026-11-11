@@ -203,7 +203,7 @@ def resolve_tracks_dir(cfg):
 
 NBINS = 2000  # position bins around the lap (about 2 m per bin at Buttonwillow)
 
-VERSION = "2.30.1"  # THE version stamp -- releases bump this constant only;
+VERSION = "2.31.0"  # THE version stamp -- releases bump this constant only;
 # coach_config.json deliberately carries no version key (it drifted stale once)
 
 DEFAULT_CONFIG = {
@@ -5395,7 +5395,7 @@ def build_report_html(coach):
         pts_attr = " ".join(f"{XY(x, y)[0]:.0f},{XY(x, y)[1]:.0f}"
                             for x, y in zip(xs, ys))
         parts = [f'<svg viewBox="0 0 {w * scale + 140:.0f} {h * scale + 100:.0f}" '
-                 f'xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">']
+                 f'xmlns="http://www.w3.org/2000/svg" style="width:100%">']
         # v2.21.0: the reference line becomes a pale ribbon and the
         # session best lap's own driven line rides on top of it,
         # colored by speed; corner badges move off the line on leader
@@ -5587,7 +5587,7 @@ def build_report_html(coach):
     points_html = ""
     if ranked:
         items = []
-        for c, avg, latest in ranked[:5]:
+        for c, avg, latest in ranked[:3]:
             cue = corner_cue(
                 latest,
                 priority=guide_priority(p.guide, c["num"]),
@@ -5626,128 +5626,102 @@ def build_report_html(coach):
     table_html = ("<table><tr><th>#</th><th>Corner</th><th>Avg loss</th><th>Brake Δ (last lap, ft)</th>"
                   "<th>Brake spread (ft)</th><th>Apex Δ (mph)</th><th>Coast</th></tr>" + "\n".join(rows) + "</table>")
 
-    # v2.3: track-guide section -- the human coach's notes paired
-    # with the corner data above, when a guide exists for this track.
-    guide_html = ""
-    g = getattr(p, "guide", None) if p else None
-    if g:
-        blocks = []
-        for c in (p.corners or []):
-            z = guide_zone(g, c["num"])
-            if not z:
-                continue
-            tips = z.get("tips") or []
-            char = z.get("character") or ""
-            if not tips and not char:
-                continue
-            pri = z.get("priority")
-            pri_s = f" \u00b7 priority: {esc(pri)}" if pri else ""
-            tip_lis = "".join(f"<li>{esc(tip_text(t))}</li>" for t in tips)
-            blocks.append(
-                f"<p><b>{esc(corner_label(c))}</b>{pri_s}</p>"
-                + (f"<p>{esc(char)}</p>" if char else "")
-                + (f"<ul>{tip_lis}</ul>" if tip_lis else ""))
-        for u in g.get("unmatched") or []:
-            tip_lis = "".join(f"<li>{esc(tip_text(t))}</li>" for t in (u.get("tips") or []))
-            blocks.append(
-                f"<p><b>{esc(u.get('corner', 'Unmatched corner'))}</b> "
-                f"<i>(not a separate zone on your map \u2014 "
-                f"{esc(u.get('between', ''))})</i></p>"
-                + (f"<ul>{tip_lis}</ul>" if tip_lis else ""))
-        notes = g.get("layout_notes") or []
-        if notes:
-            blocks.append("<p><b>Layout notes (from the source)</b></p><ul>"
-                          + "".join(f"<li>{esc(n)}</li>" for n in notes) + "</ul>")
-        if blocks:
-            srcmeta = g.get("source") or {}
-            src_line = ""
-            if srcmeta.get("title"):
-                src_line = (f"<p class='sub'>From: {esc(srcmeta.get('title', ''))}"
-                            f" \u2014 {esc(srcmeta.get('channel', ''))}</p>")
-            guide_html = "<h2>Track guide</h2>" + src_line + "\n".join(blocks) + "\n"
-
-    # v2.25.0: coaching effectiveness — what was coached, what
-    # changed, and the plain classification. Open objectives are
-    # shown as pending; earlier sessions' closed objectives come
-    # from the combo history, and one that matches a live
-    # objective again is flagged as recurred.
-    objectives_html = ""
+    # v2.31.0: coaching effectiveness as a one-line footer
+    # summary -- the one-page report has no room for the table.
+    # The verdicts themselves still live in the debrief text and
+    # the combo history.
+    objectives_line = ""
     _obs = getattr(coach, "_objectives", [])
-    _hist_obs = ((getattr(coach, "history", None) or {})
-                 .get("objectives") or [])
-    if _obs or _hist_obs:
+    if _obs:
         _status_label = {"effective": "Effective",
                          "behavioral": "Behavioral response",
                          "no response": "No measurable response",
                          "negative": "Negative response",
                          "inconclusive": "Inconclusive",
-                         "open": "Pending — more laps needed"}
-        _rows = []
-        for ob in _obs:
-            _before = _fmt_metric(ob.get("unit"), ob.get("base_disp"))
-            _after = _fmt_metric(ob.get("unit"), ob.get("follow_disp"))
+                         "open": "Pending"}
+        _closed = [ob for ob in _obs if ob["status"] != "open"]
+        _bits = []
+        for ob in _closed[:3]:
             _st = _status_label.get(ob["status"], ob["status"])
             if ob.get("retained"):
-                _st += " · retained"
-            _rows.append(
-                f"<tr><td>{ob.get('num', '—')}</td><td>{esc(ob['name'])}</td>"
-                f"<td>{esc(_KIND_LABEL.get(ob['kind'], ob['kind']))}</td>"
-                f"<td>{_before} → {_after}</td><td>{esc(_st)}</td></tr>")
-        for h in _hist_obs[-6:]:
-            _live = any(o["name"] == h.get("name")
-                        and o["kind"] == h.get("kind") for o in _obs)
-            _st = _status_label.get(h.get("status"), h.get("status") or "")
-            if _live and h.get("status") == "effective":
-                _st += " · recurred this session"
-            _rows.append(
-                f"<tr><td>—</td><td>{esc(h.get('name', ''))}</td>"
-                f"<td>{esc(_KIND_LABEL.get(h.get('kind'), h.get('kind') or ''))}</td>"
-                f"<td>earlier session</td><td>{esc(_st)}</td></tr>")
-        objectives_html = (
-            "<h2>Coaching effectiveness</h2>\n"
-            "<p class='sub'>An objective opens when an instruction "
-            "is heard; its baseline is the median of the previous "
-            "clean laps, and it is judged on the laps after — "
-            "behaviour first, lap time as the guardrail.</p>\n"
-            "<table><tr><th>#</th><th>Corner</th><th>Coached</th>"
-            "<th>Before → after</th><th>Result</th></tr>"
-            + "".join(_rows) + "</table>\n")
+                _st += " \u00b7 retained"
+            _bits.append(
+                f"{esc(ob['name'])} "
+                f"{esc(_KIND_LABEL.get(ob['kind'], ob['kind']))}"
+                f" \u2014 {esc(_st)}")
+        _open_n = len(_obs) - len(_closed)
+        if _open_n:
+            _bits.append(f"{_open_n} open \u2014 not judged yet")
+        if _bits:
+            objectives_line = ("<span><b>Coaching effectiveness:</b> "
+                               + " \u00b7 ".join(_bits) + "</span>")
 
     trace_html = _trace_svg(p, getattr(coach, "_session_best", None),
                             getattr(coach, "_optimal", None))
-    summary_txt = "\n".join(coach.session_summary_lines())
-    best = fmt_lap(p.best_lap_s) if p and p.best_lap_s else "—"
+    best = fmt_lap(p.best_lap_s) if p and p.best_lap_s else "\u2014"
     track = esc(p.key) if p else "unknown"
+    leaks_line = ""
+    if ranked:
+        _leaks = []
+        for _c, _avg, _lat in ranked[:3]:
+            _nm = _c.get("name") or f"Turn {_c['num']}"
+            _leaks.append(f"{esc(_nm)} {_avg:+.2f}s")
+        leaks_line = ("<span><b>Biggest leaks:</b> "
+                      + " \u00b7 ".join(_leaks) + "</span>")
+    # v2.31.0: one-page report (Albert's layout, mocked up and
+    # approved Nov 11) -- header band; top half split between the
+    # corner table (left, key points under it) and the map
+    # (right); the speed & brake charts as the bottom band;
+    # effectiveness and biggest leaks as one-line footers. The
+    # track-guide section and the prose session summary are gone
+    # (the guide still feeds cues and the guided lap; the full
+    # summary still lands in the debrief text file).
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="20"><title>AC Live Coach — Session Report</title>
+<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="20"><title>AC Live Coach \u2014 Session Report</title>
 <style>
-body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 24px auto; max-width: 980px;
-       padding: 0 16px; color: #16181d; background: #fff; }}
-h1 {{ font-size: 24px; margin-bottom: 2px; }} h2 {{ font-size: 18px; margin-top: 28px; }}
-.sub {{ color: #555; margin-top: 0; }}
-table {{ border-collapse: collapse; width: 100%; margin-top: 8px; }}
-th, td {{ border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: left; font-size: 15px; }}
-pre {{ background: #f4f5f7; padding: 12px; border-radius: 6px; white-space: pre-wrap; }}
-.legend span {{ margin-right: 16px; font-size: 13px; }}
-.dot {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; }}
+* {{ box-sizing: border-box; }}
+body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; color: #16181d; background: #fff; }}
+.page {{ height: 100vh; display: grid; grid-template-rows: auto 1fr 1fr auto; gap: 8px; padding: 12px 16px 8px; }}
+header {{ display: flex; align-items: baseline; gap: 14px; border-bottom: 2px solid #16181d; padding-bottom: 5px; }}
+h1 {{ font-size: 21px; margin: 0; }}
+header .sub {{ color: #555; font-size: 13px; }}
+header .stats {{ margin-left: auto; font-size: 13px; color: #444; }}
+.main {{ display: grid; grid-template-columns: 5fr 6fr; gap: 16px; min-height: 0; }}
+.left {{ display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: hidden; }}
+h3 {{ font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #5a6b7a; margin: 2px 0 4px; }}
+table {{ border-collapse: collapse; width: 100%; }}
+th, td {{ border-bottom: 1px solid #ddd; padding: 3px 6px; text-align: left; font-size: 13px; white-space: nowrap; }}
+th {{ color: #5a6b7a; border-bottom: 2px solid #c9d3da; }}
+.points ol {{ margin: 0; padding-left: 17px; font-size: 13px; }}
+.points li {{ margin: 2px 0; }}
+.mapbox {{ display: flex; flex-direction: column; min-height: 0; height: 100%; }}
+.mapbox > svg {{ flex: 1; min-height: 0; }}
+.maplegend {{ font-size: 11.5px; color: #555; text-align: center; }}
+.maplegend span {{ margin-right: 10px; }}
+.dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }}
+.chartband {{ min-height: 0; display: flex; flex-direction: column; }}
+.chartband > h2 {{ font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #5a6b7a; margin: 2px 0 4px; }}
+.chartband > svg {{ flex: 1; min-height: 0; width: 100%; }}
+.legend span {{ margin-right: 12px; font-size: 11.5px; }}
+footer {{ font-size: 11.5px; color: #5a6b7a; border-top: 1px solid #e3e8ec; padding-top: 4px; display: flex; gap: 22px; flex-wrap: wrap; }}
 </style></head><body>
-<h1>Session Report</h1>
-<p class="sub">{track} &middot; Best lap <b>{best}</b> &middot; {len(coach.lap_records)} laps analysed
-&middot; Turn numbers match the voice cues. &middot; AC Live Coach v{VERSION}</p>
-{map_svg}
-<p class="legend"><span><span class="dot" style="background:#2e9e5b"></span>≤0.05s lost</span>
-<span><span class="dot" style="background:#e0a100"></span>0.05–0.25s</span>
-<span><span class="dot" style="background:#d64545"></span>&gt;0.25s</span>
-<span><span class="dot" style="background:#9aa0a6"></span>no data yet</span></p>
-<h2>Key coaching points</h2>
-{points_html}
-<h2>Corner data (averages vs your best lap)</h2>
+<div class="page">
+<header><h1>Session Report</h1><span class="sub">{track}</span><span class="stats">Best lap <b>{best}</b> &middot; {len(coach.lap_records)} laps analysed &middot; AC Live Coach v{VERSION}</span></header>
+<div class="main">
+<div class="left">
+<div><h3>Corner data \u2014 averages vs your best lap</h3>
 {table_html}
-{trace_html}{guide_html}{objectives_html}<h2>Session summary</h2>
-<pre>{esc(summary_txt)}</pre>
-<p class="sub">Map drawn from your own driven line (heading + distance integration).
-Corners where you left the track (2+ tyres off) are excluded from the averages —
-the coach doesn't count a save as a technique problem.</p>
+<div style="font-size:11px;color:#5a6b7a">Laps where you left the track (2+ tyres off) are excluded from the averages.</div></div>
+<div class="points"><h3>Key coaching points</h3>
+{points_html}</div>
+</div>
+<div class="mapbox">{map_svg}
+<div class="maplegend"><span><span class="dot" style="background:#2e9e5b"></span>\u22640.05s lost</span><span><span class="dot" style="background:#e0a100"></span>0.05\u20130.25s</span><span><span class="dot" style="background:#d64545"></span>&gt;0.25s</span><span><span class="dot" style="background:#9aa0a6"></span>no data yet</span><span>badge colour = average loss at that turn</span></div>
+</div>
+</div>
+<div class="chartband">{trace_html}</div>
+<footer>{objectives_line}{leaks_line}<span>Map drawn from your own driven line. Turn numbers match the voice cues.</span></footer>
+</div>
 </body></html>"""
 
 
